@@ -1,71 +1,51 @@
-# 🚀 Project Name: GitRepo Insight Chatbot
+## SK Networks Family AI 캠프 3차 단위 프로젝트 3팀
 
-## 📌 Project Overview
-This project aims to develop a chatbot that analyzes a given GitHub repository URL and provides detailed answers about:
-- The structure of the repository
-- The purpose of the project
-- The code flow and logic
-- The role and functionality of each file
+# 💻🤖 프로젝트 주제: GitHub 기반 코드 분석 챗봇
 
-It serves as an assistant tool for developers, students, and researchers to understand unfamiliar GitHub projects quickly and intuitively.
+## 👥 팀원 소개
+| Name          | Role              |
+|---------------|-------------------|
+| 김이경  | 챗봇 프론트엔드 구현  |
+| 노명구    |~~| 
+| 지상원  |~~ |
+| 허한결    |~~    | 
+| 황차해   |~~    | 
 
----
 
-## 🎯 Project Purpose
-The main goal is to reduce the time and effort required to explore open-source repositories. By automating the understanding process, this chatbot empowers users to:
-- Grasp key information from any GitHub repo without manual reading
-- Improve productivity and accelerate learning
-- Facilitate technical onboarding and code review processes
+## 📌 프로젝트 개요 및 목적
+현재의 ChatGPT에 GitHub 주소를 입력하면,
+1. 깃허브가 어떤 구조로 구성되어 있는지 알지 못하며
+2. 찾는 기능이 어떤 파일에 있는지 GPT는 불분명하고 부정확한 정보를 제공해, 직접 확인해야 하며
+3. 코드를 파악하기 위해서는 각각의 코드 파일을 다운로드 후 GPT에 입력해야 하는 문제점이 있다.
 
----
+따라서, 깃허브 리포지토리 URL을 입력하면 해당 URL에 대한 사용자의 질문에 대답하는 챗봇을 개발하는 것에 목적을 둔다.
 
-## 👥 Team Introduction
-| Name          | Role              | Description                              |
-|---------------|-------------------|------------------------------------------|
-| Kim Lee Kyung | Project Manager   | Planning, architecture design            |
-| Jane Doe      | Frontend Developer| UI/UX implementation with React          |
-| John Smith    | Backend Developer | Server, NLP integration with GPT         |
-| Alex Kim      | Data Engineer     | GitHub API handling, file parsing logic  |
+-
 
----
+## 📅 프로젝트 과정
+### 데이터 전처리
+- ~~~~~
 
-## 🛠️ Tech Stack
-- **Frontend**: React, Tailwind CSS
-- **Backend**: Node.js, Express
-- **AI Model**: OpenAI GPT API
-- **Database**: MongoDB
-- **Others**: GitHub REST API, LangChain (optional)
+### 임베딩
+- ~~~~~
+
+### 프롬프트 작성
+- ~~~~~
 
 ---
 
-## 📅 Project Timeline
-### Phase 1: Planning (Week 1)
-- Define features and requirements
-- Research GitHub API and chatbot design
+## 💡 프로젝트 의의
 
-### Phase 2: Development (Weeks 2–4)
-- Frontend and backend development
-- GPT prompt tuning and response handling
+✔ 코드 리딩 시간 단축
+주요 함수와 흐름을 요약해 빠른 이해 가능
 
-### Phase 3: Testing & Deployment (Week 5)
-- Usability testing
-- Deploy to cloud (e.g., Vercel, Render)
+✔ 오픈소스 기여 허들 완화
+신규 기여자의 코드 이해를 도와 기여 장벽 낮춤
 
----
-
-## 💡 Project Significance
-- Provides an innovative solution to quickly understand open-source projects
-- Bridges the gap between code and comprehension using AI
-- Useful for education, code review, onboarding, and personal study
-
----
-
-## 📷 Screenshots (Optional)
-> Include chatbot UI mockups or demo video thumbnails here.
+✔ 개발 학습 도구로 활용 가능
+AI의 대화형 분석으로 초보자도 쉽게 코드 학습 가능
 
 ---
 
 ## 🚀 How to Run the Project
-1. Clone the repo:
-   ```bash
-   git clone https://github.com/your-username/github-chatbot.git
+~~~~~~ (링크)
