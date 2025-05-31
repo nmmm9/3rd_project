@@ -48,3 +48,5 @@ chroma.db/
 build/
 dist/
 *.egg-info/ 
+
+sessions.json

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, Response
 import uuid
 from github_analyzer import analyze_repository
 from chat_handler import handle_chat, handle_modify_request, apply_changes
@@ -7,6 +7,7 @@ import os
 import sys
 import db
 import traceback
+import json
 
 load_dotenv()
 
@@ -19,9 +20,30 @@ if not key:
 
 db.init_db()
 
+# 세션 데이터를 파일에 저장하고 로드하는 함수
+def save_sessions(sessions_data):
+    try:
+        os.makedirs('sessions', exist_ok=True)
+        with open('sessions/sessions.json', 'w', encoding='utf-8') as f:
+            json.dump(sessions_data, f, ensure_ascii=False, indent=2)
+        print(f"[DEBUG] 세션 데이터 저장 완료 (세션 수: {len(sessions_data)})")
+    except Exception as e:
+        print(f"[DEBUG] 세션 데이터 저장 오류: {e}")
+
+def load_sessions():
+    try:
+        if os.path.exists('sessions/sessions.json'):
+            with open('sessions/sessions.json', 'r', encoding='utf-8') as f:
+                sessions_data = json.load(f)
+            print(f"[DEBUG] 세션 데이터 로드 완료 (세션 수: {len(sessions_data)})")
+            return sessions_data
+    except Exception as e:
+        print(f"[DEBUG] 세션 데이터 로드 오류: {e}")
+    return {}
+
 app = Flask(__name__)
 
-sessions = {}  # session_id: {'repo_url': ..., 'token': ..., 'files': ...}
+sessions = load_sessions()  # session_id: {'repo_url': ..., 'token': ..., 'files': ...}
 
 @app.route('/')
 def index():
@@ -39,27 +61,59 @@ def analyze():
         token = data.get('token')
         if not repo_url or not repo_url.startswith('https://github.com/'):
             return jsonify({'status': '에러', 'error': '올바른 GitHub 저장소 URL을 입력하세요.'}), 400
+        
+        # 새 세션 ID 생성
         session_id = str(uuid.uuid4())
-        try:
-            files = analyze_repository(repo_url, token, session_id)
-            sessions[session_id] = {
-                'repo_url': repo_url,
-                'token': token,
-                'files': files
-            }
-            return jsonify({'status': '분석 완료', 'session_id': session_id, 'files': files})
-        except Exception as e:
-            msg = str(e)
-            print("[분석 에러]", msg)
-            traceback.print_exc()
-            if '404' in msg:
-                return jsonify({'status': '에러', 'error': '저장소를 찾을 수 없습니다. URL과 공개/비공개 여부, 토큰을 확인하세요.'}), 400
-            elif '401' in msg or '403' in msg:
-                return jsonify({'status': '에러', 'error': '권한이 없습니다. 비공개 저장소는 Personal Access Token이 필요합니다.'}), 400
-            elif 'OPENAI_API_KEY' in msg:
-                return jsonify({'status': '에러', 'error': 'OpenAI API 키가 올바르지 않거나 누락되었습니다.'}), 400
-            else:
-                return jsonify({'status': '에러', 'error': f'분석 중 오류 발생: {msg}'}), 400
+        
+        # 분석 진행 상황을 위한 응답 헤더 설정
+        def generate_progress():
+            yield json.dumps({'status': '분석 시작', 'progress': 0}) + '\n'
+            
+            try:
+                # 저장소 분석 시작
+                yield json.dumps({'status': '저장소 클론 중...', 'progress': 10}) + '\n'
+                
+                result = analyze_repository(repo_url, token, session_id)
+                files = result['files']
+                directory_structure = result['directory_structure']
+                
+                yield json.dumps({'status': '파일 분석 완료', 'progress': 60}) + '\n'
+                
+                # 디렉토리 구조 정보 로그 추가
+                if directory_structure:
+                    print(f"[DEBUG] 디렉토리 구조 정보 생성 성공 (길이: {len(directory_structure)} 문자)")
+                    # 전체 디렉토리 구조 출력
+                    print("[DEBUG] 디렉토리 구조 전체:\n" + directory_structure)
+                    yield json.dumps({'status': '디렉토리 구조 생성 완료', 'progress': 80}) + '\n'
+                else:
+                    print("[DEBUG] 디렉토리 구조 정보가 생성되지 않았습니다.")
+                    yield json.dumps({'status': '디렉토리 구조 생성 실패', 'progress': 80}) + '\n'
+                
+                # 세션 데이터 저장
+                sessions[session_id] = {
+                    'repo_url': repo_url,
+                    'token': token,
+                    'files': files,
+                    'directory_structure': directory_structure
+                }
+                
+                # 세션 데이터를 파일에 저장
+                save_sessions(sessions)
+                
+                yield json.dumps({'status': '세션 데이터 저장 완료', 'progress': 90}) + '\n'
+                yield json.dumps({
+                    'status': '분석 완료', 
+                    'progress': 100,
+                    'session_id': session_id, 
+                    'file_count': len(files)
+                }) + '\n'
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[ERROR] 저장소 분석 중 오류 발생: {error_msg}")
+                yield json.dumps({'status': '에러', 'error': error_msg, 'progress': -1}) + '\n'
+        
+        return Response(generate_progress(), mimetype='application/x-ndjson')
     except Exception as e:
         print("[분석 알 수 없는 에러]", str(e))
         traceback.print_exc()

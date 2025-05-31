@@ -4,11 +4,12 @@
     <meta charset="UTF-8">
     <title>챗봇 - GitHub AI 코드 분석</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body class="container py-5">
     <h2 class="mb-4">챗봇 - GitHub AI 코드 분석</h2>
     <div id="repo-summary" class="mb-3">저장소 분석이 완료되었습니다. 질문해주세요!</div>
-    <div id="chat-box" class="border rounded p-3 mb-3" style="height:300px; overflow-y:auto; background:#f8f9fa;"></div>
+    <div id="chat-box" class="border rounded p-3 mb-3" style="height:500px; overflow-y:auto; background:#f8f9fa;"></div>
     <form id="chat-form" class="d-flex">
         <input type="text" class="form-control me-2" id="user-input" placeholder="질문 또는 코드 수정 요청 입력..." autocomplete="off" required>
         <button type="submit" class="btn btn-primary">전송</button>
@@ -40,9 +41,26 @@
                 })
             });
             const data = await res.json();
-            if (data.answer) {
-                chatBox.innerHTML += `<div><b>AI:</b> ${data.answer}</div>`;
+            
+            // 세션 오류 처리
+            if (data.error === 'session_not_found' || data.error === 'search_error') {
+                chatBox.innerHTML += `<div class="alert alert-danger"><b>AI:</b> ${marked.parse(data.answer)}</div>`;
+                chatBox.scrollTop = chatBox.scrollHeight;
+                
+                // 3초 후 메인 페이지로 이동
+                setTimeout(() => {
+                    alert('세션이 만료되었거나 오류가 발생했습니다. 메인 페이지로 이동합니다.');
+                    window.location.href = '/';
+                }, 3000);
+                return;
             }
+            
+            // 일반 응답 처리
+            if (data.answer) {
+                chatBox.innerHTML += `<div><b>AI:</b> ${marked.parse(data.answer)}</div>`;
+            }
+            
+            // 코드 수정 처리
             if (data.modified_code) {
                 lastFileName = data.file_name || '';
                 lastModifiedCode = data.modified_code || '';
@@ -58,7 +76,12 @@
                         })
                     });
                     const applyData = await applyRes.json();
-                    codePreview.innerHTML += `<div class='mt-2 text-success'>${applyData.result}</div>`;
+                    
+                    if (applyData.error) {
+                        codePreview.innerHTML += `<div class='mt-2 alert alert-danger'>${applyData.error}</div>`;
+                    } else {
+                        codePreview.innerHTML += `<div class='mt-2 text-success'>${applyData.result}</div>`;
+                    }
                 }
             } else {
                 codePreview.innerHTML = '';

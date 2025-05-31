@@ -50,10 +50,87 @@ class GitHubAnalyzer:
                 print(f"[DEBUG] GitHub API 에러: {r.status_code} {r.text}")
                 raise Exception(f'GitHub API 오류: {r.status_code} {r.text}')
             data = r.json()
-            self.all_files = [item['path'] for item in data.get('tree', []) if item['type'] == 'blob']
+            
+            # 전체 트리 데이터 저장
+            self.tree_data = data.get('tree', [])
+            
+            # 파일 경로만 추출 (기존 방식)
+            self.all_files = [item['path'] for item in self.tree_data if item['type'] == 'blob']
+            
+            # 디렉토리 구조 생성
+            self.directory_structure = self.build_directory_structure(self.tree_data)
         except Exception as e:
             print("[DEBUG] GitHub API 파일 목록 에러:", e)
             raise
+            
+    def build_directory_structure(self, tree_data):
+        """
+        GitHub API에서 가져온 트리 데이터를 계층형 디렉토리 구조로 변환
+        """
+        root = {'name': self.repo, 'type': 'directory', 'children': {}}
+        
+        # 모든 파일과 디렉토리를 계층 구조로 구성
+        for item in tree_data:
+            path_parts = item['path'].split('/')
+            current_level = root['children']
+            
+            # 경로의 각 부분을 순회하며 구조 생성
+            for i, part in enumerate(path_parts[:-1]):
+                if part not in current_level:
+                    current_level[part] = {'name': part, 'type': 'directory', 'children': {}}
+                current_level = current_level[part]['children']
+            
+            # 마지막 부분 (파일명 또는 디렉토리명)
+            last_part = path_parts[-1]
+            if item['type'] == 'blob':
+                current_level[last_part] = {'name': last_part, 'type': 'file', 'path': item['path'], 'size': item.get('size', 0)}
+            elif item['type'] == 'tree' and last_part not in current_level:
+                current_level[last_part] = {'name': last_part, 'type': 'directory', 'children': {}}
+        
+        return root
+        
+    def get_directory_structure_text(self, node=None, prefix='', is_last=True):
+        """
+        디렉토리 구조를 텍스트로 변환 (트리 형태로 출력)
+        """
+        if node is None:
+            # 최초 호출시 디버그 로그 추가
+            print(f"[DEBUG] 디렉토리 구조 텍스트 생성 시작 (repo: {self.repo})")
+            node = self.directory_structure
+            result = f"{node['name']} (프로젝트 루트)\n"
+            prefix = ''
+        else:
+            connector = '└── ' if is_last else '├── '
+            result = f"{prefix}{connector}{node['name']}\n"
+            prefix += '    ' if is_last else '│   '
+        
+        if node['type'] == 'directory' and 'children' in node:
+            # 자식 노드를 정렬하여 디렉토리가 먼저 오고 파일이 나중에 오도록 함
+            dirs = [(k, v) for k, v in node['children'].items() if v['type'] == 'directory']
+            files = [(k, v) for k, v in node['children'].items() if v['type'] == 'file']
+            
+            # 이름 기준으로 정렬
+            dirs.sort(key=lambda x: x[0])
+            files.sort(key=lambda x: x[0])
+            
+            # 모든 항목 합치기 (디렉토리 먼저, 그 다음 파일)
+            children = dirs + files
+            
+            for i, (_, child) in enumerate(children):
+                is_last_child = (i == len(children) - 1)
+                result += self.get_directory_structure_text(child, prefix, is_last_child)
+        
+        # 최종 결과 반환 시 디버그 로그 추가 (최상위 호출에서만)
+        if node is self.directory_structure:
+            result_length = len(result)
+            print(f"[DEBUG] 디렉토리 구조 텍스트 생성 완료 (길이: {result_length} 문자)")
+            if result_length > 0:
+                # 전체 디렉토리 구조 출력
+                print("[DEBUG] 디렉토리 구조 전체:\n" + result)
+            else:
+                print("[DEBUG] 생성된 디렉토리 구조가 비어있습니다.")
+        
+        return result
 
     def fetch_file_content(self, path):
         # 파일 내용 읽기 (raw.githubusercontent.com 사용)
@@ -117,4 +194,12 @@ def analyze_repository(repo_url, token=None, session_id=None):
     analyzer.fetch_file_list()
     analyzer.filter_main_files()
     analyzer.chunk_and_embed()
-    return analyzer.files 
+    
+    # 디렉토리 구조 텍스트 생성
+    directory_structure_text = analyzer.get_directory_structure_text()
+    
+    # 파일 리스트와 함께 디렉토리 구조 반환
+    return {
+        'files': analyzer.files,
+        'directory_structure': directory_structure_text
+    }
