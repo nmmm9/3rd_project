@@ -8,8 +8,12 @@ import sys
 import db
 import traceback
 import json
+import openai
 
 load_dotenv()
+
+import openai
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 key = os.environ.get("OPENAI_API_KEY")
 print(f"[DEBUG] OPENAI_API_KEY loaded: {key[:8]}...{key[-4:] if key else ''}")
@@ -73,11 +77,26 @@ def analyze():
                 # 저장소 분석 시작
                 yield json.dumps({'status': '저장소 클론 중...', 'progress': 10}) + '\n'
                 
-                result = analyze_repository(repo_url, token, session_id)
-                files = result['files']
-                directory_structure = result['directory_structure']
-                
-                yield json.dumps({'status': '파일 분석 완료', 'progress': 60}) + '\n'
+                print(f"[DEBUG] analyze_repository 호출 시작 (repo_url: {repo_url}, session_id: {session_id})")
+                try:
+                    result = analyze_repository(repo_url, token, session_id)
+                    print(f"[DEBUG] analyze_repository 결과: {list(result.keys())}")
+                    
+                    if 'files' not in result or 'directory_structure' not in result:
+                        print(f"[ERROR] analyze_repository 결과가 올바르지 않습니다: {result}")
+                        raise Exception("analyze_repository가 올바른 결과를 반환하지 않았습니다.")
+                    
+                    files = result['files']
+                    directory_structure = result['directory_structure']
+                    
+                    print(f"[DEBUG] 분석된 파일 수: {len(files)}")
+                    print(f"[DEBUG] 디렉토리 구조 길이: {len(directory_structure) if directory_structure else 0}")
+                    
+                    yield json.dumps({'status': '파일 분석 완료', 'progress': 60}) + '\n'
+                except Exception as e:
+                    print(f"[ERROR] analyze_repository 호출 중 오류: {e}")
+                    traceback.print_exc()
+                    raise e
                 
                 # 디렉토리 구조 정보 로그 추가
                 if directory_structure:
