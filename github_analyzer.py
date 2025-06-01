@@ -1,9 +1,12 @@
-"""GitHub 저장소 분석 및 임베딩을 위한 모듈
+"""
+GitHub 저장소 분석 및 임베딩을 위한 모듈
 
-이 모듈은 GitHub 저장소의 내용을 가져와서 분석하고, 임베딩하여 저장하는 기능을 제공합니다.
+이 모듈은 GitHub 저장소의 내용을 가져와서 분석하고, 
+LangChain Document로 변환한 후 ChromaDB에 임베딩하여 저장하는 기능을 제공합니다.
 
 주요 클래스:
-    - GitHubAnalyzer: GitHub 저장소에서 파일을 가져오고 분석하는 클래스
+    - GitHubRepositoryFetcher: GitHub 저장소에서 파일을 가져오는 클래스
+    - RepositoryEmbedder: 저장소 내용을 임베딩하는 클래스
 
 주요 함수:
     - analyze_repository: GitHub 저장소를 분석하고 임베딩하는 메인 함수
@@ -15,46 +18,89 @@ import os
 import re
 import openai
 import git
+import base64
 from typing import Optional, List, Dict, Any, Tuple
 from langchain.schema import Document
+from cryptography.fernet import Fernet
+import tiktoken
+import ast
+import markdown
+import concurrent.futures
+import asyncio
+import sys
 
-# 주요 파일 확장자
-MAIN_EXTENSIONS = ['.py', '.js', '.md']
-
-# 청크 크기
-CHUNK_SIZE = 500
+# ----------------- 상수 정의 -----------------
+MAIN_EXTENSIONS = ['.py', '.js', '.md']  # 분석할 주요 파일 확장자
+CHUNK_SIZE = 500  # 텍스트 청크 크기
+GITHUB_TOKEN = "GITHUB_TOKEN"  # 환경 변수 키 이름
+KEY_FILE = ".key"  # 암호화 키 파일
 
 # ChromaDB 기본 클라이언트 (로컬)
 chroma_client = chromadb.Client()
 
-def parse_github_repo(repo_url: str) -> Tuple[str, str]:
+def analyze_repository(repo_url: str, token: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    https://github.com/user/repo 형태에서 ('user', 'repo') 추출
+    GitHub 저장소를 분석하고 임베딩하는 메인 함수
+    
+    이 함수는 다음과 같은 단계로 동작합니다:
+    1. GitHub 저장소를 로컬에 클론
+    2. 주요 파일 목록을 가져와서 필터링 (MAIN_EXTENSIONS에 정의된 확장자만)
+    3. 파일 내용을 가져와서 임베딩 처리
+    4. 디렉토리 구조 트리 텍스트 생성
     
     Args:
-        repo_url (str): GitHub 저장소 URL
+        repo_url (str): 분석할 GitHub 저장소 URL
+        token (Optional[str]): GitHub 개인 액세스 토큰
+        session_id (Optional[str]): 세션 ID (기본값: owner_repo)
         
     Returns:
-        Tuple[str, str]: (owner, repo) 튜플
+        Dict[str, Any]:
+            'files': 분석된 파일 목록 (각 파일은 {'path': '...', 'content': '...'} 형식)
+            'directory_structure': 디렉토리 구조 트리 텍스트
         
     Raises:
-        ValueError: 잘못된 GitHub URL 형식인 경우
+        ValueError: 잘못된 GitHub URL인 경우
+        Exception: 저장소 클론 실패 시
     """
-    m = re.match(r'https?://github.com/([^/]+)/([^/]+)', repo_url)
-    if not m:
-        raise ValueError('잘못된 GitHub URL')
-    return m.group(1), m.group(2)
+    try:
+        # 1. Git 저장소에서 데이터 가져오기
+        fetcher = GitHubRepositoryFetcher(repo_url, token, session_id)
+        fetcher.clone_repo()
+        
+        # 2. 주요 파일 필터링 및 내용 가져오기
+        fetcher.filter_main_files()  # MAIN_EXTENSIONS에 정의된 확장자만 필터링
+        files = fetcher.get_file_contents()
 
-class GitHubAnalyzer:
+        # 3. 데이터 임베딩 처리
+        embedder = RepositoryEmbedder(fetcher.session_id)
+        embedder.process_and_embed(files)
+
+        # 4. 디렉토리 구조 트리 텍스트 생성
+        directory_structure = fetcher.generate_directory_structure()
+        
+        return {
+            'files': files,
+            'directory_structure': directory_structure
+        }
+        
+    except ValueError as e:
+        print(f"[오류] 잘못된 GitHub URL: {e}")
+        raise
+    except Exception as e:
+        print(f"[오류] 저장소 분석 실패: {e}")
+        raise
+
+class GitHubRepositoryFetcher:
     """
-    GitHub 저장소에서 파일을 가져오고 분석하는 클래스
+    GitHub 저장소에서 파일을 가져오는 클래스
     
     이 클래스는 GitHub API를 사용하여 저장소의 파일과 디렉토리를 가져오고,
-    디렉토리 구조를 분석하며, 파일 내용을 청크로 나누어 임베딩하는 기능을 제공합니다.
+    LangChain Document 형식으로 변환하는 기능을 제공합니다.
     """
+    
     def __init__(self, repo_url: str, token: Optional[str] = None, session_id: Optional[str] = None):
         """
-        GitHub 저장소 분석기 초기화
+        GitHub 저장소 뷰어 초기화
         
         Args:
             repo_url (str): GitHub 저장소 URL
@@ -65,414 +111,572 @@ class GitHubAnalyzer:
         self.token = token
         self.headers = {'Authorization': f'token {token}'} if token else {}
         self.files = []
-        self.owner, self.repo = parse_github_repo(repo_url)
+        
+        # 저장소 정보 추출
+        self.owner, self.repo, self.path = self.extract_repo_info(repo_url)
+        if not self.owner or not self.repo:
+            raise ValueError("Invalid GitHub repository URL")
+            
+        # 세션 및 저장소 경로 설정
         self.session_id = session_id or f"{self.owner}_{self.repo}"
         self.repo_path = f"./repos/{self.session_id}"
-        self.tree_data = []
-        self.all_files = []
-        self.directory_structure = {}
+        
+        # ChromaDB 컬렉션 초기화
+        self.collection = chroma_client.get_or_create_collection(
+            name=self.session_id,
+            metadata={"description": f"Repository: {self.owner}/{self.repo}"}
+        )
 
-    def clone_repo(self) -> None:
+    def create_error_response(self, message: str, status_code: int) -> Dict[str, Any]:
+        """
+        API 에러 응답 생성
+        
+        Args:
+            message (str): 에러 메시지
+            status_code (int): HTTP 상태 코드
+            
+        Returns:
+            Dict[str, Any]: 에러 정보를 포함하는 딕셔너리
+        """
+        return {
+            'error': True,
+            'message': message,
+            'status_code': status_code
+        }
+
+    def handle_github_response(self, response: requests.Response, path: str = None) -> Dict[str, Any]:
+        """
+        GitHub API 응답 처리
+        
+        Args:
+            response (requests.Response): GitHub API 응답
+            path (str, optional): 요청한 파일/디렉토리 경로
+            
+        Returns:
+            Dict[str, Any]: 처리된 응답 데이터 또는 에러 정보
+        """
+        if response.status_code == 403:
+            return self.create_error_response(
+                'GitHub API 호출 제한에 도달했습니다. 잠시 후 다시 시도해주세요.',
+                403
+            )
+            
+        if response.status_code == 404:
+            return self.create_error_response(
+                f'파일을 찾을 수 없습니다: {path}' if path else '요청한 리소스를 찾을 수 없습니다.',
+                404
+            )
+            
+        if response.status_code == 401:
+            return self.create_error_response(
+                '비공개 저장소에 접근하려면 GitHub 토큰이 필요합니다.',
+                401
+            )
+            
+        if response.status_code != 200:
+            return self.create_error_response(
+                f'GitHub API 오류: {response.text}',
+                response.status_code
+            )
+        
+        return response.json()
+
+    def extract_repo_info(self, url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        GitHub URL에서 소유자, 저장소 이름, 파일 경로를 추출
+        
+        Args:
+            url (str): GitHub 저장소 URL
+            
+        Returns:
+            Tuple[Optional[str], Optional[str], Optional[str]]: 
+                (owner, repo, path) 또는 (None, None, None)
+        """
+        try:
+            # URL 정규화
+            url = url.strip().rstrip('/')
+            if url.endswith('.git'):
+                url = url[:-4]
+                
+            # URL 파싱
+            parts = url.split('/')
+            if 'github.com' in parts:
+                github_index = parts.index('github.com')
+                if len(parts) >= github_index + 3:
+                    owner = parts[github_index + 1]
+                    repo = parts[github_index + 2]
+                    path = '/'.join(parts[github_index + 3:]) if len(parts) > github_index + 3 else None
+                    return owner, repo, path
+        except Exception as e:
+            print(f"URL 파싱 중 오류 발생: {e}")
+        return None, None, None
+
+    def clone_repo(self):
         """
         GitHub 저장소를 로컬에 클론
-        
-        저장소를 로컬 디렉토리에 클론합니다. 이미 클론된 경우 스킵합니다.
         
         Raises:
             Exception: 클론 실패 시 예외 발생
         """
-        print(f"[DEBUG] 저장소 클론 시작: {self.repo_url} -> {self.repo_path}")
-        
         if not os.path.exists(self.repo_path):
             try:
                 git.Repo.clone_from(self.repo_url, self.repo_path)
-                print(f"[DEBUG] 저장소 클론 성공: {self.repo_path}")
             except Exception as e:
-                print(f"[ERROR] GitHub 클론 에러: {e}")
-                raise Exception(f"GitHub 저장소 클론 오류: {e}")
-        else:
-            print(f"[DEBUG] 이미 클론된 저장소 사용: {self.repo_path}")
+                print("[DEBUG] GitHub 클론 에러:", e)
+                raise
 
-    def fetch_file_list(self) -> None:
+    def get_repo_directory_contents(self, path: str = "") -> Optional[List[Dict[str, Any]]]:
         """
-        GitHub API를 사용하여 저장소의 파일 목록과 디렉토리 구조를 가져옴
-        
-        GitHub API를 통해 전체 파일 트리를 가져와서 파일 목록과 계층형 디렉토리 구조를 생성합니다.
-        
-        Raises:
-            Exception: GitHub API 요청 실패 또는 데이터 처리 오류 시 발생
-        """
-        print(f"[DEBUG] GitHub API로 파일 목록 가져오기 시작: {self.owner}/{self.repo}")
-        
-        # GitHub API로 전체 파일 트리 가져오기
-        url = f'https://api.github.com/repos/{self.owner}/{self.repo}/git/trees/HEAD?recursive=1'
-        try:
-            r = requests.get(url, headers=self.headers)
-            if r.status_code != 200:
-                print(f"[ERROR] GitHub API 에러: {r.status_code} {r.text}")
-                raise Exception(f'GitHub API 오류: {r.status_code} {r.text}')
-            data = r.json()
-            
-            # 전체 트리 데이터 저장
-            self.tree_data = data.get('tree', [])
-            print(f"[DEBUG] 파일 트리 가져오기 성공: {len(self.tree_data)} 항목")
-            
-            # 파일 경로만 추출
-            self.all_files = [item['path'] for item in self.tree_data if item['type'] == 'blob']
-            print(f"[DEBUG] 전체 파일 수: {len(self.all_files)}")
-            
-            # 디렉토리 구조 생성
-            self.directory_structure = self.build_directory_structure(self.tree_data)
-            print(f"[DEBUG] 디렉토리 구조 생성 완료")
-        except Exception as e:
-            print(f"[ERROR] GitHub API 파일 목록 에러: {e}")
-            raise Exception(f"GitHub 파일 목록 가져오기 실패: {e}")
-
-            
-    def build_directory_structure(self, tree_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        GitHub API에서 가져온 트리 데이터를 계층형 디렉토리 구조로 변환
+        GitHub API를 사용하여 저장소의 디렉토리 내용을 가져옴
         
         Args:
-            tree_data (List[Dict[str, Any]]): GitHub API에서 가져온 트리 데이터 리스트
+            path (str): 디렉토리 경로 (기본값: 루트 디렉토리)
             
         Returns:
-            Dict[str, Any]: 계층형 디렉토리 구조를 표현하는 중첩 사전
-            
-        Example:
-            {
-                'name': 'repo-name',
-                'type': 'directory',
-                'children': {
-                    'src': {
-                        'name': 'src',
-                        'type': 'directory',
-                        'children': {...}
-                    },
-                    'README.md': {
-                        'name': 'README.md',
-                        'type': 'file',
-                        'path': 'README.md',
-                        'size': 5000
-                    }
-                }
+            Optional[List[Dict[str, Any]]]: 
+                디렉토리 내용 목록 또는 에러 정보
+                각 항목은 GitHub API 응답 형식의 파일/디렉토리 정보
+        """
+        try:
+            # API 호출 준비
+            url = f"https://api.github.com/repos/{self.owner}/{self.repo}/contents/{path}"
+            headers = {
+                "Accept": "application/vnd.github.v3+json"
             }
-        """
-        print(f"[DEBUG] 디렉토리 구조 생성 시작 (항목 수: {len(tree_data)})")
-        
-        root = {'name': self.repo, 'type': 'directory', 'children': {}}
-        
-        try:
-            # 모든 파일과 디렉토리를 계층 구조로 구성
-            for item in tree_data:
-                path_parts = item['path'].split('/')
-                current_level = root['children']
-                
-                # 경로의 각 부분을 순회하며 구조 생성
-                for i, part in enumerate(path_parts[:-1]):
-                    if part not in current_level:
-                        current_level[part] = {'name': part, 'type': 'directory', 'children': {}}
-                    current_level = current_level[part]['children']
-                
-                # 마지막 부분 (파일명 또는 디렉토리명)
-                last_part = path_parts[-1]
-                if item['type'] == 'blob':
-                    current_level[last_part] = {
-                        'name': last_part, 
-                        'type': 'file', 
-                        'path': item['path'], 
-                        'size': item.get('size', 0)
-                    }
-                elif item['type'] == 'tree' and last_part not in current_level:
-                    current_level[last_part] = {
-                        'name': last_part, 
-                        'type': 'directory', 
-                        'children': {}
-                    }
+            if self.token:
+                headers["Authorization"] = f"token {self.token}"
             
-            print(f"[DEBUG] 디렉토리 구조 생성 완료")
-            return root
+            # API 요청 실행
+            response = requests.get(url, headers=headers)
+            content = self.handle_github_response(response, path)
             
+            # 응답 검증
+            if isinstance(content, dict) and content.get('error'):
+                return content
+            if isinstance(content, list):
+                return content
+            return self.create_error_response("잘못된 응답 형식", 500)
+            
+        except requests.exceptions.RequestException as e:
+            return self.create_error_response(f'API 요청 실패: {str(e)}', 500)
         except Exception as e:
-            print(f"[ERROR] 디렉토리 구조 생성 오류: {e}")
-            # 오류 발생 시 기본 구조라도 반환
-            return root
-        
-    def get_directory_structure_text(self, node: Optional[Dict[str, Any]] = None, prefix: str = '', is_last: bool = True) -> str:
+            return self.create_error_response(f'예상치 못한 오류: {str(e)}', 500)
+            
+    def get_repo_content_as_document(self, path: str) -> Optional[Document]:
         """
-        디렉토리 구조를 텍스트로 변환 (트리 형태로 출력)
-        
-        이 함수는 재귀적으로 디렉토리 구조를 탐색하며 텍스트 트리로 변환합니다.
-        
-        Args:
-            node (Optional[Dict[str, Any]]): 현재 처리할 노드. None이면 루트 노드로 간주
-            prefix (str): 현재 라인의 들여쓰기 접두사
-            is_last (bool): 현재 노드가 해당 레벨의 마지막 노드인지 여부
-            
-        Returns:
-            str: 트리 형태로 표현된 디렉토리 구조 텍스트
-        """
-        try:
-            if node is None:
-                # 최초 호출시 디버그 로그 추가
-                print(f"[DEBUG] 디렉토리 구조 텍스트 생성 시작 (repo: {self.repo})")
-                node = self.directory_structure
-                result = f"{node['name']} (프로젝트 루트)\n"
-                prefix = ''
-            else:
-                connector = '└── ' if is_last else '├── '  # └── or ├──
-                result = f"{prefix}{connector}{node['name']}\n"
-                prefix += '    ' if is_last else '│   '  # │
-            
-            if node['type'] == 'directory' and 'children' in node:
-                # 자식 노드를 정렬하여 디렉토리가 먼저 오고 파일이 나중에 오도록 함
-                dirs = [(k, v) for k, v in node['children'].items() if v['type'] == 'directory']
-                files = [(k, v) for k, v in node['children'].items() if v['type'] == 'file']
-                
-                # 이름 기준으로 정렬
-                dirs.sort(key=lambda x: x[0])
-                files.sort(key=lambda x: x[0])
-                
-                # 모든 항목 합치기 (디렉토리 먼저, 그 다음 파일)
-                children = dirs + files
-                
-                for i, (_, child) in enumerate(children):
-                    is_last_child = (i == len(children) - 1)
-                    result += self.get_directory_structure_text(child, prefix, is_last_child)
-            
-            # 최종 결과 반환 시 디버그 로그 추가 (최상위 호출에서만)
-            if node is self.directory_structure:
-                result_length = len(result)
-                print(f"[DEBUG] 디렉토리 구조 텍스트 생성 완료 (길이: {result_length} 문자)")
-                if result_length > 0:
-                    # 전체 디렉토리 구조 출력 (길이가 너무 길면 일부만 출력)
-                    if result_length > 500:
-                        preview = result[:250] + "\n... (중략) ...\n" + result[-250:]
-                        print(f"[DEBUG] 디렉토리 구조 미리보기 (전체 {result_length} 문자):\n{preview}")
-                    else:
-                        print("[DEBUG] 디렉토리 구조 전체:\n" + result)
-                else:
-                    print("[DEBUG] 생성된 디렉토리 구조가 비어있습니다.")
-            
-            return result
-            
-        except Exception as e:
-            print(f"[ERROR] 디렉토리 구조 텍스트 생성 오류: {e}")
-            # 오류 발생 시 기본 문자열 반환
-            return f"{self.repo} (오류 발생)\n"
-
-    def fetch_file_content(self, path: str) -> str:
-        """
-        GitHub 저장소에서 파일 내용을 가져옴
+        GitHub API를 사용하여 저장소의 파일 내용을 LangChain Document로 가져옴
         
         Args:
             path (str): 파일 경로
+        
+        Returns:
+            Optional[Document]: 
+                LangChain Document 객체 또는 None (파일이 없는 경우)
+                Document는 파일 내용과 메타데이터를 포함
+        """
+        try:
+            # API 호출 준비
+            url = f"https://api.github.com/repos/{self.owner}/{self.repo}/contents/{path}"
+            headers = {
+                "Accept": "application/vnd.github.v3+json"
+            }
+            if self.token:
+                headers["Authorization"] = f"token {self.token}"
+            
+            # API 요청 실행
+            response = requests.get(url, headers=headers)
+            content_data = self.handle_github_response(response, path)
+            
+            # 에러 체크
+            if not content_data or isinstance(content_data, dict) and content_data.get('error'):
+                return None
+            
+            # Base64 디코딩
+            content = base64.b64decode(content_data['content']).decode('utf-8')
+            
+            # Document 객체 생성
+            return Document(
+                page_content=content,
+                metadata={
+                    'source': content_data['html_url'],
+                    'file_name': content_data['name'],
+                    'file_path': content_data['path'],
+                    'sha': content_data['sha'],
+                    'size': content_data['size'],
+                    'type': content_data['type']
+                }
+            )
+        except Exception as e:
+            print(f"Document 변환 중 오류 발생: {e}")
+            return None
+
+    def get_repo_directory_as_documents(self, path: str = "") -> List[Document]:
+        """
+        GitHub API를 사용하여 저장소의 디렉토리 내용을 LangChain Document 리스트로 가져옴
+        
+        Args:
+            path (str): 디렉토리 경로 (기본값: 루트 디렉토리)
             
         Returns:
-            str: 파일 내용 (오류 발생 시 빈 문자열 반환)
+            List[Document]: 
+                LangChain Document 객체 리스트
+                각 Document는 파일의 내용과 메타데이터를 포함
         """
-        # 파일 내용 읽기 (raw.githubusercontent.com 사용)
-        url = f'https://raw.githubusercontent.com/{self.owner}/{self.repo}/HEAD/{path}'
+        documents = []
         try:
-            print(f"[DEBUG] 파일 내용 가져오기: {path}")
-            r = requests.get(url, headers=self.headers)
-            if r.status_code == 200:
-                content_length = len(r.text)
-                print(f"[DEBUG] 파일 내용 가져오기 성공: {path} ({content_length} 문자)")
-                return r.text
-            print(f"[ERROR] GitHub 파일 내용 에러: {path} - {r.status_code}")
-            return ''
-        except Exception as e:
-            print(f"[ERROR] GitHub 파일 내용 에러: {path} - {e}")
-            return ''
-
-    def filter_main_files(self) -> None:
-        """
-        주요 파일 확장자를 가진 파일만 필터링
-        
-        MAIN_EXTENSIONS 목록에 있는 확장자를 가진 파일만 선택하여 self.files에 저장합니다.
-        """
-        self.files = [f for f in self.all_files if any(f.endswith(ext) for ext in MAIN_EXTENSIONS)]
-        print(f"[DEBUG] 필터링된 주요 파일 수: {len(self.files)} / {len(self.all_files)}")
-        print(f"[DEBUG] 필터링된 파일 확장자: {MAIN_EXTENSIONS}")
-
-    def chunk_and_embed(self) -> None:
-        """
-        파일 내용을 청크로 분할하고 임베딩하여 ChromaDB에 저장
-        
-        파일 내용을 가져와서 LangChain Document 객체로 변환한 후,
-        청크로 분할하고 OpenAI 임베딩을 생성하여 ChromaDB에 저장합니다.
-        
-        Raises:
-            Exception: 임베딩 생성 시 오류가 발생하면 예외 발생
-        """
-        print(f"[DEBUG] 파일 청크화 및 임베딩 시작 (파일 수: {len(self.files)})")
-        
-        # 주요 파일의 내용을 읽어 Document 객체 생성
-        documents: List[Document] = []
-        file_objs = []
-        
-        for path in self.files:
-            content = self.fetch_file_content(path)
-            if content:  # 빈 내용이 아닐 경우만 처리
-                file_obj = {'path': path, 'content': content}
-                file_objs.append(file_obj)
+            # 디렉토리 내용 가져오기
+            dir_contents = self.get_repo_directory_contents(path)
+            if not dir_contents:
+                return documents
                 
-                # LangChain Document 객체 생성
-                doc = Document(
-                    page_content=content,
-                    metadata={
-                        "path": path,
-                        "source": f"{self.owner}/{self.repo}/{path}",
-                        "file_type": os.path.splitext(path)[1][1:] if '.' in path else ""
-                    }
-                )
-                documents.append(doc)
-        
-        self.files = file_objs
-        print(f"[DEBUG] 파일 내용 가져오기 완료 (총 {len(self.files)} 파일)")
-
-        # ChromaDB 콜렉션 생성 (session_id 기준)
-        collection_name = f"repo_{self.session_id}"
-        try:
-            # 기존 콜렉션이 있으면 삭제
-            if collection_name in [col.name for col in chroma_client.list_collections()]:
-                print(f"[DEBUG] 기존 콜렉션 삭제: {collection_name}")
-                chroma_client.delete_collection(collection_name)
-            
-            collection = chroma_client.get_or_create_collection(name=collection_name)
-            print(f"[DEBUG] ChromaDB 콜렉션 생성: {collection_name}")
+            # 각 항목 처리
+            for item in dir_contents:
+                if item['type'] == 'file':
+                    # 파일인 경우 Document로 변환
+                    doc = self.get_repo_content_as_document(item['path'])
+                    if doc:
+                        documents.append(doc)
+                elif item['type'] == 'dir':
+                    # 디렉토리인 경우 재귀적으로 처리
+                    sub_docs = self.get_repo_directory_as_documents(item['path'])
+                    documents.extend(sub_docs)
+                    
+            return documents
         except Exception as e:
-            print(f"[ERROR] ChromaDB 콜렉션 생성 오류: {e}")
-            raise Exception(f"ChromaDB 콜렉션 생성 오류: {e}")
+            print(f"[API] Document 리스트 생성 실패: {str(e)}")
+            return documents
+
+    def get_all_repo_contents(self) -> List[Document]:
+        """
+        GitHub 저장소의 모든 파일과 폴더를 LangChain Document 리스트로 가져옴
         
-        # OpenAI 클라이언트 초기화
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise Exception("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
-            
-        print(f"[DEBUG] OpenAI API 클라이언트 초기화 (API Key: {api_key[:4]}...{api_key[-4:]})")
-        client = openai.OpenAI(api_key=api_key)
+        Returns:
+            List[Document]: 모든 파일의 LangChain Document 객체 리스트
+        """
+        return self.get_repo_directory_as_documents()
+
+    def get_all_main_files(self, path=""):
+        files = []
+        dir_contents = self.get_repo_directory_contents(path)
+        if isinstance(dir_contents, list):
+            for item in dir_contents:
+                if item['type'] == 'file' and any(item['path'].endswith(ext) for ext in MAIN_EXTENSIONS):
+                    files.append(item['path'])
+                elif item['type'] == 'dir':
+                    files.extend(self.get_all_main_files(item['path']))
+        return files
+
+    def filter_main_files(self):
+        self.files = self.get_all_main_files()
+        print(f"[DEBUG] 필터링된 주요 파일: {self.files}")
+        print(f"[DEBUG] 주요 파일 개수: {len(self.files)}")
+
+    def get_file_contents(self) -> List[Dict[str, Any]]:
+        """
+        주요 파일의 내용을 읽어 딕셔너리 리스트로 반환
+        Returns:
+            List[Dict[str, Any]]: 
+                파일 경로와 내용을 포함하는 딕셔너리 리스트
+                [{'path': '...', 'content': '...', 'file_name': ..., 'file_type': ..., 'sha': ..., 'source_url': ...}, ...]
+        """
+        file_objs = []
+        for path in self.files:
+            doc = self.get_repo_content_as_document(path)
+            if doc:
+                meta = doc.metadata
+                file_objs.append({
+                    'path': path,
+                    'content': doc.page_content,
+                    'file_name': meta.get('file_name'),
+                    'file_type': meta.get('file_name', '').split('.')[-1] if meta.get('file_name') else '',
+                    'sha': meta.get('sha'),
+                    'source_url': meta.get('source'),
+                })
+        return file_objs
+
+    def generate_directory_structure(self) -> str:
+        """
+        저장소의 전체 디렉토리/파일 구조를 트리 형태의 텍스트로 반환
+        """
+        # 디렉토리 내용 재귀적으로 가져오기
+        def build_tree(path=""):
+            items = self.get_repo_directory_contents(path)
+            tree = {}
+            if not items or isinstance(items, dict) and items.get('error'):
+                return tree
+            for item in items:
+                if item['type'] == 'file':
+                    tree[f"📄 {item['name']}"] = None
+                elif item['type'] == 'dir':
+                    tree[f"📁 {item['name']}"] = build_tree(item['path'])
+            return tree
         
-        # 문서 청크화 및 임베딩
-        chunk_count = 0
-        embedding_errors = 0
+        tree = build_tree()
+        lines = []
+        def traverse(node, prefix=""):
+            for key, value in sorted(node.items()):
+                lines.append(f"{prefix}{key}")
+                if value is not None:
+                    traverse(value, prefix + "  ")
+        traverse(tree)
+        return "\n".join(lines)
+
+    # ----------------- 토큰 관련 기능 -----------------
+    @staticmethod
+    def generate_key() -> bytes:
+        """
+        암호화 키 생성
         
-        for doc in documents:
-            content = doc.page_content
-            path = doc.metadata["path"]
+        Returns:
+            bytes: 생성된 암호화 키
+        """
+        if not os.path.exists(KEY_FILE):
+            key = Fernet.generate_key()
+            with open(KEY_FILE, 'wb') as key_file:
+                key_file.write(key)
+            return key
+        else:
+            with open(KEY_FILE, 'rb') as key_file:
+                return key_file.read()
+
+    @staticmethod
+    def encrypt_token(token: str) -> str:
+        """
+        토큰 암호화
+        
+        Args:
+            token (str): 암호화할 토큰
             
-            # 청크 분할
-            chunks = []
-            for i in range(0, len(content), CHUNK_SIZE):
-                chunk = content[i:i+CHUNK_SIZE]
-                chunks.append(chunk)
+        Returns:
+            str: 암호화된 토큰
+        """
+        key = GitHubRepositoryFetcher.generate_key()
+        f = Fernet(key)
+        return f.encrypt(token.encode()).decode()
+
+    @staticmethod
+    def decrypt_token(encrypted_token: str) -> str:
+        """
+        토큰 복호화
+        
+        Args:
+            encrypted_token (str): 복호화할 토큰
             
-            print(f"[DEBUG] 파일 청크화: {path} ({len(chunks)} 청크)")
+        Returns:
+            str: 복호화된 토큰
+        """
+        key = GitHubRepositoryFetcher.generate_key()
+        f = Fernet(key)
+        return f.decrypt(encrypted_token.encode()).decode()
+
+    @staticmethod
+    def update_token(token: str) -> bool:
+        """
+        환경 변수 파일에 GitHub 토큰 업데이트
+        
+        Args:
+            token (str): 업데이트할 토큰
             
-            # 각 청크 임베딩 및 저장
-            for i, chunk in enumerate(chunks):
-                chunk_id = f"{path}_{i}"
+        Returns:
+            bool: 업데이트 성공 여부
+        """
+        try:
+            # 토큰 암호화
+            encrypted_token = GitHubRepositoryFetcher.encrypt_token(token)
+            
+            # 기존 내용 읽기
+            with open(".env", 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # GitHub 토큰 찾아서 교체
+            token_found = False
+            for i, line in enumerate(lines):
+                if line.startswith(f"{GITHUB_TOKEN}="):
+                    lines[i] = f"{GITHUB_TOKEN}={encrypted_token}\n"
+                    token_found = True
+                    break
+            
+            # 토큰이 없으면 새로 추가
+            if not token_found:
+                lines.append(f"{GITHUB_TOKEN}={encrypted_token}\n")
+            
+            # 파일 다시 쓰기
+            with open(".env", 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+            
+            return True
+        except Exception as e:
+            print(f"[오류] 토큰 저장 실패: {str(e)}")
+            return False
+
+
+class RepositoryEmbedder:
+    """
+    저장소 내용을 임베딩하는 클래스
+    
+    이 클래스는 GitHub 저장소의 파일 내용을 청크로 나누고,
+    OpenAI API를 사용하여 임베딩한 후 ChromaDB에 저장합니다.
+    """
+    
+    def __init__(self, session_id: str):
+        """
+        임베더 초기화
+        
+        Args:
+            session_id (str): 세션 ID
+        """
+        self.session_id = session_id
+        self.collection = chroma_client.get_or_create_collection(name=f"repo_{session_id}")
+
+    def process_and_embed(self, files: List[Dict[str, Any]]):
+        # 내부 비동기 함수 정의
+        async def async_process_and_embed(files):
+            import openai
+            api_key = os.environ.get("OPENAI_API_KEY")
+            client = openai.AsyncClient(api_key=api_key)
+            enc = tiktoken.encoding_for_model("gpt-3.5-turbo")
+            def safe_meta(meta):
+                return {k: ('' if v is None else v if not isinstance(v, (int, float, bool)) else v) for k, v in meta.items()}
+            def split_by_tokens(text, max_tokens=256, overlap=64):
+                tokens = enc.encode(text)
+                chunks = []
+                start = 0
+                while start < len(tokens):
+                    end = min(start + max_tokens, len(tokens))
+                    chunk = enc.decode(tokens[start:end])
+                    chunks.append((chunk, start, end))
+                    if end == len(tokens):
+                        break
+                    start += max_tokens - overlap
+                return chunks
+            def chunk_python_functions(source_code):
                 try:
-                    # OpenAI 임베딩 생성
-                    response = client.embeddings.create(
+                    tree = ast.parse(source_code)
+                except Exception:
+                    return [(source_code, 0, len(enc.encode(source_code)), None, None, 1, len(source_code.splitlines()))]
+                lines = source_code.splitlines()
+                chunks = []
+                for node in tree.body:
+                    if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                        start = node.lineno - 1
+                        end = getattr(node, 'end_lineno', None)
+                        if end is None:
+                            continue
+                        chunk = '\n'.join(lines[start:end])
+                        name = node.name
+                        class_name = node.name if isinstance(node, ast.ClassDef) else None
+                        func_name = node.name if isinstance(node, ast.FunctionDef) else None
+                        if len(enc.encode(chunk)) > 256:
+                            for sub_chunk, t_start, t_end in split_by_tokens(chunk, max_tokens=256, overlap=64):
+                                chunks.append((sub_chunk, t_start, t_end, func_name, class_name, start+1, end))
+                        else:
+                            chunks.append((chunk, 0, len(enc.encode(chunk)), func_name, class_name, start+1, end))
+                if not chunks:
+                    for chunk, t_start, t_end in split_by_tokens(source_code, max_tokens=256, overlap=64):
+                        chunks.append((chunk, t_start, t_end, None, None, 1, len(source_code.splitlines())))
+                return chunks
+            def chunk_markdown(md_text):
+                pattern = r'(\n#+ .+|\n```[\s\S]+?```|\n\s*\n)'
+                parts = re.split(pattern, md_text)
+                chunks = []
+                for part in parts:
+                    part = part.strip()
+                    if not part:
+                        continue
+                    if len(enc.encode(part)) > 256:
+                        for chunk, t_start, t_end in split_by_tokens(part, max_tokens=256, overlap=64):
+                            chunks.append((chunk, t_start, t_end, None, None, None, None))
+                    else:
+                        chunks.append((part, 0, len(enc.encode(part)), None, None, None, None))
+                return chunks
+            def chunk_js(source_code):
+                return [(*x, None, None, None, None) for x in split_by_tokens(source_code, max_tokens=256, overlap=64)]
+            # 1. 전체 청크 수집
+            all_chunks = []
+            for file in files:
+                content = file['content']
+                path = file['path']
+                ext = os.path.splitext(path)[1].lower()
+                file_name = file.get('file_name')
+                file_type = file.get('file_type')
+                sha = file.get('sha')
+                source_url = file.get('source_url')
+                if ext == '.py':
+                    chunks = chunk_python_functions(content)
+                elif ext == '.md':
+                    chunks = chunk_markdown(content)
+                elif ext == '.js':
+                    chunks = chunk_js(content)
+                else:
+                    chunks = [(*x, None, None, None, None) for x in split_by_tokens(content, max_tokens=256, overlap=64)]
+                for i, (chunk, t_start, t_end, func_name, class_name, start_line, end_line) in enumerate(chunks):
+                    all_chunks.append((chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line))
+            # 2. 비동기 임베딩+역할태깅 함수
+            async def embed_and_tag_async(args, client):
+                chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line = args
+                # 임베딩
+                try:
+                    emb_resp = await client.embeddings.create(
                         input=chunk,
                         model="text-embedding-3-small"
                     )
-                    embedding = response.data[0].embedding
-                    
-                    # ChromaDB에 저장
-                    collection.add(
-                        ids=[chunk_id],
-                        embeddings=[embedding],
-                        documents=[chunk],
-                        metadatas=[{
-                            "path": path, 
-                            "chunk_index": i,
-                            "source": doc.metadata["source"],
-                            "file_type": doc.metadata["file_type"]
-                        }]
-                    )
-                    chunk_count += 1
-                    
+                    embedding = emb_resp.data[0].embedding
                 except Exception as e:
-                    print(f"[ERROR] 임베딩 오류 ({path}, 청크 {i}): {e}")
-                    embedding_errors += 1
-                    # 개별 청크 오류는 무시하고 계속 진행
-        
-        print(f"[DEBUG] 임베딩 완료: 총 {chunk_count} 청크 처리, {embedding_errors} 오류 발생")
-        
-        if embedding_errors > 0 and chunk_count == 0:
-            # 모든 임베딩이 실패한 경우
-            raise Exception(f"임베딩 실패: 모든 {embedding_errors} 청크의 임베딩이 실패했습니다.")
-
-
-def analyze_repository(repo_url: str, token: Optional[str] = None, session_id: Optional[str] = None, progress_callback: Optional[callable] = None) -> Dict[str, Any]:
-    """
-    GitHub 저장소를 분석하고 임베딩하는 메인 함수
-    
-    Args:
-        repo_url (str): GitHub 저장소 URL
-        token (Optional[str]): GitHub 개인 액세스 토큰 (선택사항)
-        session_id (Optional[str]): 세션 ID (선택사항)
-        progress_callback (Optional[callable]): 진행 상황을 보고하기 위한 콜백 함수 (선택사항)
-        
-    Returns:
-        Dict[str, Any]: 분석 결과가 포함된 사전 (파일 목록과 디렉토리 구조 포함)
-        
-    Raises:
-        Exception: 저장소 분석 중 오류 발생 시 예외 발생
-    """
-    print(f"[INFO] GitHub 저장소 분석 시작: {repo_url}")
-    
-    # 진행률 보고를 위한 기본 콜백 함수
-    if progress_callback is None:
-        progress_callback = lambda status, progress, message: print(f"[PROGRESS] {status}: {progress:.1f}% - {message}")
-    
-    try:
-        # 분석기 초기화
-        analyzer = GitHubAnalyzer(repo_url, token, session_id)
-        progress_callback("initializing", 0, f"분석기 초기화: {repo_url}")
-        
-        # 저장소 클론
-        progress_callback("cloning", 10, f"저장소 클론 중: {repo_url}")
-        analyzer.clone_repo()
-        
-        # 파일 목록 가져오기
-        progress_callback("fetching_files", 30, "파일 목록 가져오는 중...")
-        analyzer.fetch_file_list()
-        
-        # 주요 파일 필터링
-        progress_callback("filtering_files", 50, "주요 파일 필터링 중...")
-        analyzer.filter_main_files()
-        
-        # 파일 청크화 및 임베딩
-        progress_callback("embedding", 60, "파일 내용 임베딩 중...")
-        analyzer.chunk_and_embed()
-        
-        # 디렉토리 구조 텍스트 생성
-        progress_callback("generating_structure", 90, "디렉토리 구조 생성 중...")
-        directory_structure_text = analyzer.get_directory_structure_text()
-        
-        # 분석 완료
-        progress_callback("completed", 100, "분석 완료!")
-        print(f"[INFO] GitHub 저장소 분석 완료: {repo_url}")
-        
-        # 결과 반환
-        return {
-            'files': analyzer.files,
-            'directory_structure': directory_structure_text,
-            'status': 'success'
-        }
-        
-    except Exception as e:
-        print(f"[ERROR] 저장소 분석 오류: {e}")
-        progress_callback("error", 0, f"오류 발생: {str(e)}")
-        
-        # 오류 정보 포함하여 반환
-        return {
-            'files': [],
-            'directory_structure': '',
-            'status': 'error',
-            'error_message': str(e)
-        }
+                    print(f"[WARNING] 임베딩 실패: {e}")
+                    embedding = [0.0] * 1536
+                # 역할 태깅
+                tag_prompt = f"아래 코드는 어떤 역할(기능/목적)을 하나요? 한글로 간단히 요약해줘.\n\n코드:\n{chunk}"
+                try:
+                    tag_resp = await client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": tag_prompt}],
+                        temperature=0.0,
+                        max_tokens=32
+                    )
+                    role_tag = tag_resp.choices[0].message.content.strip()
+                except Exception as e:
+                    print(f"[WARNING] 역할 태깅 실패: {e}")
+                    role_tag = ''
+                return (embedding, role_tag, chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line)
+            # 3. 비동기 병렬 실행 (max_concurrent=20)
+            print(f"[DEBUG] 임베딩+역할태깅 asyncio 병렬 처리 시작 (청크 수: {len(all_chunks)})")
+            semaphore = asyncio.Semaphore(20)
+            async def sem_task(args):
+                async with semaphore:
+                    return await embed_and_tag_async(args, client)
+            tasks = [sem_task(args) for args in all_chunks]
+            results = await asyncio.gather(*tasks)
+            print(f"[DEBUG] 임베딩+역할태깅 asyncio 병렬 처리 완료")
+            # 4. DB 저장 (동기)
+            for embedding, role_tag, chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line in results:
+                file_name = file.get('file_name')
+                file_type = file.get('file_type')
+                sha = file.get('sha')
+                source_url = file.get('source_url')
+                path = file['path']
+                metadata = {
+                    "path": path or '',
+                    "file_name": file_name or '',
+                    "file_type": file_type or '',
+                    "sha": sha or '',
+                    "source_url": source_url or '',
+                    "chunk_index": i,
+                    "function_name": func_name or '',
+                    "class_name": class_name or '',
+                    "start_line": start_line if start_line is not None else -1,
+                    "end_line": end_line if end_line is not None else -1,
+                    "token_start": t_start if t_start is not None else -1,
+                    "token_end": t_end if t_end is not None else -1,
+                    "role_tag": role_tag
+                }
+                self.collection.add(
+                    ids=[f"{path}_{i}"],
+                    embeddings=[embedding],
+                    documents=[chunk],
+                    metadatas=[safe_meta(metadata)]
+                )
+        # 동기 함수에서 비동기 실행
+        if sys.version_info >= (3, 7):
+            asyncio.run(async_process_and_embed(files))
+        else:
+            raise RuntimeError("Python 3.7 이상에서만 지원됩니다.")
