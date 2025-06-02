@@ -5,6 +5,7 @@ import chromadb
 from github_analyzer import chroma_client
 from git_modifier import create_branch_and_commit
 import re
+from chat_memory import save_conversation, get_relevant_conversations
 
 # top-k 유사 청크 개수
 TOP_K = 5
@@ -30,10 +31,13 @@ SYSTEM_PROMPT_MODIFY = (
 
 # 더 구체적인 유저 프롬프트
 PROMPT_TEMPLATE = """
-아래는 사용자의 질문과 관련된 코드 청크 및 프로젝트 구조, 그리고 각 코드의 메타데이터(파일명, 함수명, 클래스명, 라인, sha, 역할 태그)입니다.
+아래는 사용자의 질문과 관련된 코드 청크 및 프로젝트 구조, 이전 대화 기록, 그리고 각 코드의 메타데이터(파일명, 함수명, 클래스명, 라인, sha, 역할 태그)입니다.
 
 [프로젝트 디렉토리 구조]
 {directory_structure}
+
+[이전 대화 기록]
+{conversation_history}
 
 [코드 컨텍스트 및 메타데이터]
 {context}
@@ -41,8 +45,9 @@ PROMPT_TEMPLATE = """
 [질문]
 {question}
 
-위 코드, 메타데이터, 프로젝트 구조, 질문을 참고하여, 반드시 한글로, 예시와 함께, 친절하게 답변해 주세요.
+위 코드, 메타데이터, 프로젝트 구조, 이전 대화 기록, 질문을 참고하여, 반드시 한글로, 예시와 함께, 친절하게 답변해 주세요.
 - 답변에는 반드시 근거(파일명, 함수명, 클래스명, 라인, 역할 태그 등)를 명확히 포함하세요.
+- 이전 대화 내용과 일관성을 유지하면서 답변하세요.
 - 코드가 필요한 경우 코드 블록(```)과 한글 주석을 적극적으로 활용하세요.
 - 단계별 설명, 표, 요약, 비교, 한계 등도 적극적으로 활용하세요.
 - 프로젝트 구조와 코드의 역할(역할 태그)을 바탕으로, 전체 맥락과 흐름을 설명하세요.
@@ -52,10 +57,13 @@ PROMPT_TEMPLATE = """
 """
 
 MODIFY_PROMPT_TEMPLATE = """
-아래는 사용자의 코드 수정 요청과 관련된 코드 청크 및 프로젝트 구조입니다.
+아래는 사용자의 코드 수정 요청과 관련된 코드 청크, 프로젝트 구조 및 이전 대화 기록입니다.
 
 [프로젝트 디렉토리 구조]
 {directory_structure}
+
+[이전 관련 대화]
+{conversation_history}
 
 [코드 컨텍스트]
 {context}
@@ -68,7 +76,8 @@ MODIFY_PROMPT_TEMPLATE = """
 <수정된 전체 코드>
 
 - 반드시 한글 주석을 포함하세요.
-- 프로젝트 구조에 대한 이해를 바탕으로 코드를 수정하세요.
+- 이전 대화 기록과 프로젝트 구조를 기반으로 코드를 수정하세요.
+- 이전에 논의된 수정사항이 있다면 일관성을 유지하세요.
 - 불필요한 변경은 하지 말고, 요청한 부분만 명확하게 반영하세요.
 - 코드 외 설명이 필요하면 코드 아래에 추가로 작성하세요.
 """
@@ -348,11 +357,39 @@ def handle_chat(session_id, message):
 
     # 3. LLM에 컨텍스트와 함께 전달하여 답변 생성
     try:
-        # 프롬프트 생성
+        # 이전 대화 기록 가져오기
+        print(f"[CHAT_HANDLER] 이전 대화 기록 가져오기 시작 - 세션: {session_id}")
+        conversation_history = get_relevant_conversations(session_id, message)
+        
+        # 대화 기록 결과 로그
+        if conversation_history == '이전 대화 없음':
+            print(f"[CHAT_HANDLER] 관련 대화 기록이 없습니다.")
+        else:
+            newline = "\n"
+            history_lines = conversation_history.strip().split(newline)
+            conversation_count = sum(1 for line in history_lines if line.startswith('[관련 대화'))
+            print(f"[CHAT_HANDLER] 가져온 관련 대화 수: {conversation_count}개, 전체 길이: {len(conversation_history)} 문자")
+            
+            # 각 대화 삼합수 출력 (디버깅용)
+            current_conversation = ""
+            for line in history_lines:
+                if line.startswith('[관련 대화'):
+                    if current_conversation:
+                        print(f"[CHAT_HANDLER] 대화 삼합수: {hash(current_conversation) % 1000}")
+                    current_conversation = line
+                else:
+                    current_conversation += newline + line
+            
+            if current_conversation:
+                print(f"[CHAT_HANDLER] 대화 삼합수: {hash(current_conversation) % 1000}")
+        
+        
+        # 프롬프트 생성 (대화 기록 포함)
         prompt = PROMPT_TEMPLATE.format(
             context=context, 
             question=message,
-            directory_structure=directory_structure
+            directory_structure=directory_structure,
+            conversation_history=conversation_history
         )
         print("\n[LLM 프롬프트]\n" + prompt + "\n")  # 프롬프트 확인용 출력
         print(f"[DEBUG] 프롬프트 길이: {len(prompt)} 문자")
@@ -390,6 +427,23 @@ def handle_chat(session_id, message):
         
         answer = response.choices[0].message.content.strip()
         print(f"[DEBUG] LLM 응답 성공 (길이: {len(answer)} 문자)")
+        
+        # 대화 기록 저장
+        try:
+            print(f"[CHAT_HANDLER] 대화 기록 저장 시작 - 세션: {session_id}")
+            print(f"[CHAT_HANDLER] 질문: {message[:100]}{'...' if len(message) > 100 else ''}")
+            print(f"[CHAT_HANDLER] 답변: {answer[:100]}{'...' if len(answer) > 100 else ''}")
+            
+            # 질문-답변 삼합수 계산 (디버깅용)
+            qa_hash = hash(message + answer) % 10000
+            print(f"[CHAT_HANDLER] 저장할 QA 삼합수: {qa_hash}")
+            
+            save_conversation(session_id, message, answer)
+            print(f"[CHAT_HANDLER] 대화 기록 저장 성공: session_id={session_id}")
+        except Exception as e:
+            import traceback
+            print(f"[CHAT_HANDLER] 대화 기록 저장 실패: {str(e)}")
+            traceback.print_exc()
         
         # 응답이 비어있는지 확인
         if not answer:
@@ -766,11 +820,16 @@ def handle_modify_request(session_id, message):
     
     # 프롬프트 생성 및 LLM 호출
     try:
-        # 프롬프트 생성
+        # 이전 대화 기록 가져오기
+        conversation_history = get_relevant_conversations(session_id, message)
+        print(f"[DEBUG] 코드 수정 관련 대화 기록 조회 결과: {len(conversation_history) if conversation_history != '이전 대화 없음' else 0} 문자")
+        
+        # 프롬프트 생성 (대화 기록 포함)
         prompt = MODIFY_PROMPT_TEMPLATE.format(
             context=context, 
             request=message,
-            directory_structure=directory_structure
+            directory_structure=directory_structure,
+            conversation_history=conversation_history
         )
         print("\n[LLM 프롬프트 - 코드수정]\n" + prompt + "\n")  # 프롬프트 확인용 출력
         print(f"[DEBUG] 코드수정 프롬프트 길이: {len(prompt)} 문자")
@@ -780,11 +839,12 @@ def handle_modify_request(session_id, message):
             print(f"[WARNING] 코드수정 프롬프트가 너무 깁니다. 컨텍스트 일부를 잘라냅니다.")
             # 컨텍스트 길이 제한
             max_context_length = 80000  # 적절한 길이로 조정
-            truncated_context = context[:max_context_length] + "\n... (컨텍스트 길이 제한으로 인해 일부 내용이 생략되었습니다) ..."
+            truncated_context = context[:max_context_length] + "\n... (컨텍스트 길이 제한으로 인해 일부 내용이 생략되었습니다) ...\n\n=== 이전 대화 기록 ===\n\n" + conversation_history
             prompt = MODIFY_PROMPT_TEMPLATE.format(
                 context=truncated_context, 
                 request=message,
-                directory_structure=directory_structure
+                directory_structure=directory_structure,
+                conversation_history=""
             )
             print(f"[DEBUG] 수정된 코드수정 프롬프트 길이: {len(prompt)} 문자")
         
@@ -814,6 +874,24 @@ def handle_modify_request(session_id, message):
         
         llm_code = response.choices[0].message.content.strip()
         print(f"[DEBUG] 코드수정 LLM 응답 성공 (길이: {len(llm_code)} 문자)")
+        
+        # 대화 기록 저장
+        try:
+            print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 시작 - 세션: {session_id}")
+            summary_answer = f"코드 수정 요청: {message}\n\n수정 작업 완료"
+            print(f"[CHAT_HANDLER] 질문: {message[:100]}{'...' if len(message) > 100 else ''}")
+            print(f"[CHAT_HANDLER] 요약 답변: {summary_answer[:100]}{'...' if len(summary_answer) > 100 else ''}")
+            
+            # 질문-답변 삼합수 계산 (디버깅용)
+            qa_hash = hash(message + summary_answer) % 10000
+            print(f"[CHAT_HANDLER] 저장할 코드 수정 QA 삼합수: {qa_hash}")
+            
+            save_conversation(session_id, message, summary_answer)
+            print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 성공: session_id={session_id}")
+        except Exception as e:
+            import traceback
+            print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 실패: {str(e)}")
+            traceback.print_exc()
         
         # 응답이 비어있는지 확인
         if not llm_code:
