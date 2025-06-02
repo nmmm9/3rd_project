@@ -7,23 +7,23 @@
 <table>
   <tr>
     <td align="center">
-      <img src="https://github.com/nmmm9/3rd_project/raw/main/img/유리.png" width="100"><br />
+      <img src="img/유리.PNG" width="100"><br />
       <sub><b>김이경</b></sub>
     </td>
     <td align="center">
-      <img src="https://github.com/nmmm9/3rd_project/raw/main/img/스노우맨.png" width="100"><br />
+      <img src="img/스노우맨.PNG" width="100"><br />
       <sub><b>노명구</b></sub>
     </td>
     <td align="center">
-      <img src="https://github.com/nmmm9/3rd_project/raw/main/img/고뭉치.png" width="100"><br />
+      <img src="img/고뭉치.PNG" width="100"><br />
       <sub><b>지상원</b></sub>
     </td>
     <td align="center">
-      <img src="https://github.com/nmmm9/3rd_project/raw/main/img/짱구.png" width="100"><br />
+      <img src="img/짱구.PNG" width="100"><br />
       <sub><b>허한결</b></sub>
     </td>
     <td align="center">
-      <img src="https://github.com/nmmm9/3rd_project/raw/main/img/봉미선.png" width="100"><br />
+      <img src="img/봉미선.PNG" width="100"><br />
       <sub><b>황차해</b></sub>
     </td>
   </tr>
