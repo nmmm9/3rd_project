@@ -634,6 +634,7 @@ class RepositoryEmbedder:
                         max_tokens=32
                     )
                     role_tag = tag_resp.choices[0].message.content.strip()
+                    print(f"[INFO] 역할 태깅 결과: 파일={file.get('path')}, 청크={i}, 역할={role_tag}")
                 except Exception as e:
                     print(f"[WARNING] 역할 태깅 실패: {e}")
                     role_tag = ''
@@ -675,6 +676,7 @@ class RepositoryEmbedder:
                     documents=[chunk],
                     metadatas=[safe_meta(metadata)]
                 )
+                print(f"[INFO] DB 저장: 파일={path}, 청크={i}, 역할={role_tag}, 임베딩 길이={len(embedding)}")
         # 동기 함수에서 비동기 실행
         if sys.version_info >= (3, 7):
             asyncio.run(async_process_and_embed(files))

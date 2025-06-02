@@ -411,10 +411,16 @@ def handle_chat(session_id, message):
         }
 
 def handle_modify_request(session_id, message):
-    # 세션 데이터 확인
     from app import sessions
     print(f"[DEBUG] 현재 세션 ID: {session_id}")
     print(f"[DEBUG] 사용 가능한 세션 키: {list(sessions.keys())}")
+    
+    # GitHub 푸시 의도 감지 및 로깅
+    has_push_intent = detect_github_push_intent(message)
+    token_exists = bool(sessions.get(session_id, {}).get('token'))
+    requires_confirmation = has_push_intent
+    push_intent_message = '깃허브에 적용하려면 확인이 필요합니다.' if has_push_intent else ''
+    print(f"[DEBUG] GitHub 푸시 의도 감지 결과: {has_push_intent}, 토큰 존재: {token_exists}")
     
     session_data = sessions.get(session_id, {})
     repo_path = f"./repos/{session_id}"
@@ -425,7 +431,11 @@ def handle_modify_request(session_id, message):
             'answer': "세션 데이터가 없습니다. 새로운 레포지토리를 분석해주세요.",
             'error': "session_not_found",
             'modified_code': "",
-            'file_name': ""
+            'file_name': "",
+            'has_push_intent': has_push_intent,
+            'token_exists': token_exists,
+            'requires_confirmation': requires_confirmation,
+            'push_intent_message': push_intent_message
         }
     
     print(f"[DEBUG] 세션 데이터 키: {list(session_data.keys())}")
@@ -440,7 +450,11 @@ def handle_modify_request(session_id, message):
                 'answer': "OpenAI API 키가 설정되지 않았습니다.",
                 'error': "api_key_missing",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         print(f"[DEBUG] OpenAI API 키 확인: {api_key[:4]}...{api_key[-4:]}")
         
@@ -458,7 +472,11 @@ def handle_modify_request(session_id, message):
                 'answer': "임베딩 생성 중 오류가 발생했습니다: 임베딩 결과가 비어 있습니다.",
                 'error': "empty_embedding",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
             
         embedding = embedding_response.data[0].embedding
@@ -471,7 +489,11 @@ def handle_modify_request(session_id, message):
                 'answer': "저장소 분석 데이터에 접근할 수 없습니다. 서버를 재시작하고 저장소를 다시 분석해주세요.",
                 'error': "chroma_client_not_initialized",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         # 컬렉션 이름 생성 및 조회 시도
@@ -490,7 +512,11 @@ def handle_modify_request(session_id, message):
                     'answer': "저장소 분석 데이터를 찾을 수 없습니다. 저장소를 다시 분석해주세요.",
                     'error': "collection_not_found",
                     'modified_code': "",
-                    'file_name': ""
+                    'file_name': "",
+                    'has_push_intent': has_push_intent,
+                    'token_exists': token_exists,
+                    'requires_confirmation': requires_confirmation,
+                    'push_intent_message': push_intent_message
                 }
         except Exception as e:
             import traceback
@@ -500,7 +526,11 @@ def handle_modify_request(session_id, message):
                 'answer': f"저장소 분석 데이터 접근 중 오류가 발생했습니다: {str(e)}",
                 'error': "collection_list_error",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         # 컬렉션 가져오기
@@ -518,7 +548,11 @@ def handle_modify_request(session_id, message):
                         'answer': "저장소 분석 데이터가 비어 있습니다. 저장소를 다시 분석해주세요.",
                         'error': "empty_collection",
                         'modified_code': "",
-                        'file_name': ""
+                        'file_name': "",
+                        'has_push_intent': has_push_intent,
+                        'token_exists': token_exists,
+                        'requires_confirmation': requires_confirmation,
+                        'push_intent_message': push_intent_message
                     }
             except Exception as e:
                 print(f"[WARNING] 컬렉션 문서 수 확인 실패: {e}")
@@ -531,7 +565,11 @@ def handle_modify_request(session_id, message):
                 'answer': f"저장소 분석 데이터 접근 중 오류가 발생했습니다: {str(e)}",
                 'error': "collection_access_error",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         # 유사 코드 청크 검색
@@ -550,7 +588,11 @@ def handle_modify_request(session_id, message):
                 'answer': f"코드 검색 중 오류가 발생했습니다: {str(e)}",
                 'error': "query_error",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         # 검색 결과 유효성 검증
@@ -560,7 +602,11 @@ def handle_modify_request(session_id, message):
                 'answer': "질문과 관련된 코드를 찾을 수 없습니다. 다른 질문을 시도해보세요.",
                 'error': "no_results",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         # 관련 파일 경로 추출
@@ -577,7 +623,11 @@ def handle_modify_request(session_id, message):
                 'answer': "질문과 관련된 코드 파일을 찾을 수 없습니다. 다른 질문을 시도해보세요.",
                 'error': "no_related_files",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         print(f"[DEBUG] 관련 파일 경로: {related_files}")
@@ -602,7 +652,11 @@ def handle_modify_request(session_id, message):
             'answer': "코드 검색 중 오류가 발생했습니다. 새로운 레포지토리를 분석해주세요.",
             'error': "search_error",
             'modified_code': "",
-            'file_name': ""
+            'file_name': "",
+            'has_push_intent': has_push_intent,
+            'token_exists': token_exists,
+            'requires_confirmation': requires_confirmation,
+            'push_intent_message': push_intent_message
         }
     
     # 관련 파일들의 전체 내용 로드
@@ -683,7 +737,11 @@ def handle_modify_request(session_id, message):
             'answer': "관련 코드 파일을 로드하지 못했습니다. 저장소를 다시 분석해주세요.",
             'error': "file_load_error",
             'modified_code': "",
-            'file_name': ""
+            'file_name': "",
+            'has_push_intent': has_push_intent,
+            'token_exists': token_exists,
+            'requires_confirmation': requires_confirmation,
+            'push_intent_message': push_intent_message
         }
     
     # 청크 검색 결과도 함께 컨텍스트로 사용
@@ -747,7 +805,11 @@ def handle_modify_request(session_id, message):
                 'answer': "코드 수정 중 오류가 발생했습니다. 다시 시도해주세요.",
                 'error': "empty_response",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         llm_code = response.choices[0].message.content.strip()
@@ -760,7 +822,11 @@ def handle_modify_request(session_id, message):
                 'answer': "코드 수정을 생성하지 못했습니다. 다른 수정 요청을 시도해주세요.",
                 'error': "empty_code",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         # 파일명과 코드 분리
@@ -774,11 +840,19 @@ def handle_modify_request(session_id, message):
                 'answer': "코드 수정을 생성하지 못했습니다. 다른 수정 요청을 시도해주세요.",
                 'error': "empty_parsed_code",
                 'modified_code': "",
-                'file_name': ""
+                'file_name': "",
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message
             }
         
         # 성공적인 응답 반환
-        return {'modified_code': code, 'file_name': file_name or ''}
+        return {'modified_code': code, 'file_name': file_name or '',
+                'has_push_intent': has_push_intent,
+                'token_exists': token_exists,
+                'requires_confirmation': requires_confirmation,
+                'push_intent_message': push_intent_message}
     except Exception as e:
         import traceback
         print(f"[ERROR] 코드수정 LLM 호출 오류: {e}")
@@ -787,25 +861,107 @@ def handle_modify_request(session_id, message):
             'answer': f"코드 수정 중 오류가 발생했습니다: {str(e)}",
             'error': "llm_error",
             'modified_code': "",
-            'file_name': ""
+            'file_name': "",
+            'has_push_intent': has_push_intent,
+            'token_exists': token_exists,
+            'requires_confirmation': requires_confirmation,
+            'push_intent_message': push_intent_message
         }
 
-def apply_changes(session_id, file_name, new_content):
+def detect_github_push_intent(message):
+    """사용자 메시지에서 GitHub 푸시 의도를 감지 (정규식 + LLM 보조)"""
+    import re
+    import openai
+    print(f"[DEBUG] GitHub 푸시 의도 감지 시작: '{message}'")
+    
+    # 다양한 자연어 패턴을 포괄하는 정규식 패턴
+    push_keywords = [
+        r'깃허브(에|로)?\s*(적용|반영|올려|업로드|푸시|push|commit|커밋|업데이트|동기화|sync|적용시켜|반영해|올려줘|업로드해|push해|commit해|커밋해|업데이트해|동기화해|pr|pull request|풀리퀘|풀 리퀘|풀리퀘스트|풀 리퀘스트)',
+        r'github(에|로)?\s*(적용|반영|올려|업로드|푸시|push|commit|커밋|업데이트|동기화|sync|pr|pull request)',
+        r'깃(에|로)?\s*(적용|반영|올려|업로드|푸시|push|commit|커밋|업데이트|동기화|sync)',
+        r'적용(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'반영(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'올려(줘|주세요|달라|달라고|달라요|달라구|달라구요|달라줘|달라주세요)',
+        r'업로드(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'푸시(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'commit(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'커밋(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'업데이트(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'동기화(해|시켜|해줘|시켜줘|해주세요|시켜주세요)',
+        r'pr(생성|만들|올려|해|해주세요|해줘|시켜|시켜줘|시켜주세요)',
+        r'풀\s*리퀘(스트)?',
+        r'pull\s*request',
+        r'push',
+        r'commit',
+        r'pr',
+        r'pull request',
+    ]
+    
+    message_lower = message.lower()
+    for pattern in push_keywords:
+        if re.search(pattern, message_lower):
+            print(f"[INFO] GitHub 푸시 의도 감지 성공: 패턴 '{pattern}' 매칭")
+            return True
+    
+    # LLM 보조 검사 (정규식에 안 걸릴 때만)
+    try:
+        prompt = (
+            "다음 사용자의 요청이 '코드를 깃허브에 반영/적용/푸시/업로드/커밋/PR 생성' 등 "
+            "깃허브 원격 저장소에 실제로 변경사항을 적용하려는 의도인지 '네/아니오'로만 답해줘.\n"
+            f"요청: {message}\n"
+            "답변:"
+        )
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=2
+        )
+        answer = response.choices[0].message.content.strip()
+        print(f"[DEBUG] LLM 의도 감지 답변: {answer}")
+        if answer.startswith("네"):
+            return True
+    except Exception as e:
+        print(f"[WARNING] LLM 의도 감지 실패: {e}")
+    print("[INFO] GitHub 푸시 의도 감지 실패: 정규식/LLM 모두 불일치")
+    return False
+    
+    # 대소문자 무시하고 검색
+    message_lower = message.lower()
+    
+    print(f"[DEBUG] 소문자 변환된 메시지: '{message_lower}'")
+    
+    # 패턴 매칭
+    for pattern in push_keywords:
+        if re.search(pattern, message_lower):
+            print(f"[INFO] GitHub 푸시 의도 감지 성공: 패턴 '{pattern}' 매칭")
+            return True
+    
+    print("[INFO] GitHub 푸시 의도 감지 실패: 일치하는 패턴 없음")
+    return False
+
+def apply_changes(session_id, file_name, new_content, push_to_github=False, commit_msg=None):
     """코드 변경사항을 저장소에 적용하는 함수"""
-    print(f"[DEBUG] 코드 변경사항 적용 시작 (session_id: {session_id}, file_name: {file_name})")
+    print(f"[INFO] 코드 변경사항 적용 시작 (session_id: {session_id}, file_name: {file_name}, push_to_github: {push_to_github})")
+    
+    # GitHub 푸시 유무에 따른 로그 추가
+    if push_to_github:
+        print(f"[INFO] GitHub 푸시 요청됨. 커밋 메시지: '{commit_msg or 'AI 코드 수정'}'")
+    else:
+        print("[INFO] 로컬 저장소에만 적용 (푸시 없음)")
     
     # 입력값 검증
     if not session_id:
         print("[ERROR] 세션 ID가 제공되지 않았습니다.")
-        return {'result': '에러: 세션 ID가 제공되지 않았습니다.'}
+        return {'result': '에러: 세션 ID가 제공되지 않았습니다.', 'success': False}
         
     if not file_name:
         print("[ERROR] 파일명이 제공되지 않았습니다.")
-        return {'result': '에러: 파일명이 제공되지 않았습니다.'}
+        return {'result': '에러: 파일명이 제공되지 않았습니다.', 'success': False}
         
     if not new_content:
         print("[ERROR] 새 코드 내용이 비어 있습니다.")
-        return {'result': '에러: 적용할 코드 내용이 비어 있습니다.'}
+        return {'result': '에러: 적용할 코드 내용이 비어 있습니다.', 'success': False}
     
     # 저장소 경로 확인
     repo_path = f"./repos/{session_id}"
@@ -814,20 +970,48 @@ def apply_changes(session_id, file_name, new_content):
     import os
     if not os.path.exists(repo_path):
         print(f"[ERROR] 저장소 경로가 존재하지 않습니다: {repo_path}")
-        return {'result': f'에러: 저장소 경로가 존재하지 않습니다: {repo_path}'}
+        return {'result': f'에러: 저장소 경로가 존재하지 않습니다: {repo_path}', 'success': False}
+    
+    # 세션 데이터에서 토큰 가져오기
+    from app import sessions
+    token = sessions.get(session_id, {}).get('token', None)
+    
+    # GitHub 푸시 여부 확인
+    can_push = push_to_github and token
+    if push_to_github and not token:
+        print("[WARNING] GitHub 토큰이 없어 푸시를 수행할 수 없습니다.")
     
     # 코드 변경 적용
-    commit_msg = "AI 코드 자동 수정"
+    if not commit_msg:
+        commit_msg = "AI 코드 자동 수정"
+    
     try:
-        print(f"[DEBUG] create_branch_and_commit 호출 시작 (branch: ai-fix, file: {file_name})")
-        create_branch_and_commit(repo_path, "ai-fix", file_name, new_content, commit_msg)
+        print(f"[DEBUG] create_branch_and_commit 호출 시작 (branch: test, file: {file_name}, push: {can_push})")
+        result = create_branch_and_commit(repo_path, "test", file_name, new_content, commit_msg, token if can_push else None)
         print(f"[DEBUG] 코드 변경사항 적용 성공")
-        return {'result': '코드가 적용되었습니다.'}
+        
+        response = {
+            'result': '코드가 성공적으로 적용되었습니다.',
+            'success': True,
+            'file_name': file_name,
+            'branch': 'test',
+            'pushed_to_github': result.get('pushed', False)
+        }
+        
+        if result.get('pushed', False):
+            response['result'] = 'GitHub 저장소에 코드가 성공적으로 푸시되었습니다.'
+        else:
+            if push_to_github and not token:
+                response['result'] = '코드가 로컬에 적용되었지만, GitHub 토큰이 없어 푸시되지 않았습니다. GitHub 푸시 기능을 사용하려면 토큰을 입력해주세요.'
+            elif push_to_github:
+                response['result'] = '코드가 로컬에 적용되었지만, GitHub 푸시 중 문제가 발생했습니다.'
+        
+        return response
     except Exception as e:
         import traceback
         print(f"[ERROR] 코드 변경사항 적용 실패: {e}")
         traceback.print_exc()
-        return {'result': f'에러: {str(e)}'}
+        return {'result': f'에러: {str(e)}', 'success': False}
 
 def extract_scope_from_question(question: str):
     """
