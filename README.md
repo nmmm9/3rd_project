@@ -12,7 +12,7 @@
       <img src="img/스노우맨.PNG" width="100" />
     </td>
     <td align="center">
-      <img src="img/원장.PNG" width="90" />
+      <img src="img/원장.PNG" width="100" />
     </td>
     <td align="center">
       <img src="img/짱구.PNG" width="100" />
