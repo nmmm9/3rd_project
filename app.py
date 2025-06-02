@@ -9,6 +9,7 @@ import db
 import traceback
 import json
 import openai
+from chat_handler import detect_github_push_intent
 
 load_dotenv()
 
@@ -197,10 +198,22 @@ def apply_changes_api():
         session_id = data.get('session_id')
         file_name = data.get('file_name')
         new_content = data.get('new_content')
+        push_to_github = data.get('push_to_github', False)
+        commit_msg = data.get('commit_msg')
+        
         if not session_id or not file_name or not new_content:
             return jsonify({'error': '세션ID, 파일명, 코드 내용을 모두 입력하세요.'}), 400
+        
+        # GitHub 푸시 요청 시 토큰 확인
+        if push_to_github and not sessions.get(session_id, {}).get('token'):
+            return jsonify({
+                'error': 'GitHub 토큰이 없어 원격 저장소에 푸시할 수 없습니다. 시작 화면에서 토큰을 입력해주세요.',
+                'code': 'token_required',
+                'requires_token': True
+            }), 400
+        
         try:
-            result = apply_changes(session_id, file_name, new_content)
+            result = apply_changes(session_id, file_name, new_content, push_to_github, commit_msg)
             return jsonify(result)
         except Exception as e:
             msg = str(e)
@@ -210,6 +223,11 @@ def apply_changes_api():
                 return jsonify({'error': '해당 파일을 찾을 수 없습니다. 파일명을 다시 확인하세요.'}), 400
             elif 'branch' in msg:
                 return jsonify({'error': '브랜치 생성 또는 커밋 중 오류가 발생했습니다.'}), 400
+            elif 'remote: Invalid username or password' in msg or 'Authentication failed' in msg:
+                return jsonify({
+                    'error': 'GitHub 인증에 실패했습니다. 토큰이 유효한지 확인해주세요.',
+                    'code': 'authentication_failed'
+                }), 400
             else:
                 return jsonify({'error': f'코드 적용 중 오류: {msg}'}), 400
     except Exception as e:
@@ -217,5 +235,33 @@ def apply_changes_api():
         traceback.print_exc()
         return jsonify({'error': f'알 수 없는 오류: {str(e)}'}), 500
 
+@app.route('/check_push_intent', methods=['POST'])
+def check_push_intent():
+    """사용자 메시지에서 GitHub 푸시 의도를 감지하는 API"""
+    try:
+        data = request.get_json()
+        message = data.get('message', '')
+        session_id = data.get('session_id')
+        
+        if not message or not session_id:
+            return jsonify({'error': '메시지와 세션 ID를 모두 입력해주세요.'}), 400
+        
+        # 푸시 의도 감지
+        has_push_intent = detect_github_push_intent(message)
+        
+        # 토큰 확인
+        token_exists = bool(sessions.get(session_id, {}).get('token'))
+        
+        return jsonify({
+            'has_push_intent': has_push_intent,
+            'token_exists': token_exists,
+            'requires_confirmation': has_push_intent,
+            'message': '깃허브에 적용하려면 확인이 필요합니다.' if has_push_intent else ''
+        })
+    except Exception as e:
+        print("[의도감지 에러]", str(e))
+        traceback.print_exc()
+        return jsonify({'error': f'알 수 없는 오류: {str(e)}'}), 500
+
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(debug=False) 

@@ -57,7 +57,7 @@
 <body class="container py-5">
     <h2 class="mb-4">챗봇 - GitHub AI 코드 분석</h2>
     <div id="repo-summary" class="mb-3">저장소 분석이 완료되었습니다. 질문해주세요!</div>
-    <div id="chat-box" class="border rounded p-3 mb-3" style="height:500px; overflow-y:auto; background:#f8f9fa;"></div>
+    <div id="chat-box" class="border rounded p-3 mb-3" style="height:700px; overflow-y:auto; background:#f8f9fa;"></div>
     <form id="chat-form" class="d-flex">
         <input type="text" class="form-control me-2" id="user-input" placeholder="질문 또는 코드 수정 요청 입력..." autocomplete="off" required>
         <button type="submit" class="btn btn-primary">전송</button>
@@ -130,7 +130,57 @@
             if (data.modified_code) {
                 lastFileName = data.file_name || '';
                 lastModifiedCode = data.modified_code || '';
-                codePreview.innerHTML = `<h5>수정된 코드 미리보기</h5><div><b>파일명:</b> ${lastFileName}</div><pre><code class="language-python">${lastModifiedCode}</code></pre><button id='apply-btn' class='btn btn-success'>적용</button>`;
+                
+                // GitHub 푸시 의도 감지 API 호출
+                const checkPushRes = await fetch('/check_push_intent', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: '{{ session_id }}',
+                        message: userMsg
+                    })
+                });
+                const pushData = await checkPushRes.json();
+                const hasPushIntent = pushData.has_push_intent;
+                const hasToken = pushData.token_exists;
+                
+                // 버튼 구성 결정
+                let actionButtons = '';
+                if (hasPushIntent) {
+                    if (hasToken) {
+                        actionButtons = `
+                            <div class="d-flex gap-2 mb-3">
+                                <button id='apply-btn' class='btn btn-outline-primary'>로컬에만 적용</button>
+                                <button id='push-btn' class='btn btn-success'>GitHub에 적용(push)</button>
+                            </div>
+                            <div id="confirmation-msg" class="alert alert-info" style="display:none;">
+                                <p><strong>GitHub 저장소에 변경사항을 적용하시겠습니까?</strong></p>
+                                <p>브랜치: <code>test</code> | 파일: <code>${lastFileName}</code></p>
+                                <div class="d-flex gap-2">
+                                    <button id="confirm-push" class="btn btn-success">적용</button>
+                                    <button id="cancel-push" class="btn btn-outline-secondary">취소</button>
+                                </div>
+                            </div>`;
+                    } else {
+                        actionButtons = `
+                            <div class="d-flex gap-2 mb-3">
+                                <button id='apply-btn' class='btn btn-success'>로컬에만 적용</button>
+                            </div>
+                            <div class="alert alert-warning">
+                                <strong>GitHub 반영 기능은 토큰 입력 시에만 가능합니다.</strong><br>
+                                시작 화면에서 GitHub Personal Access Token을 입력해주세요.
+                            </div>`;
+                    }
+                } else {
+                    actionButtons = `<button id='apply-btn' class='btn btn-success'>적용</button>`;
+                }
+                
+                codePreview.innerHTML = `
+                    <h5>수정된 코드 미리보기</h5>
+                    <div><b>파일명:</b> ${lastFileName}</div>
+                    <pre><code class="language-python">${lastModifiedCode}</code></pre>
+                    ${actionButtons}`;
+                
                 document.querySelectorAll('#code-preview pre code').forEach((el) => {
                     hljs.highlightElement(el);
                     // 복사 버튼 추가
@@ -147,23 +197,77 @@
                         el.parentElement.appendChild(btn);
                     }
                 });
-                document.getElementById('apply-btn').onclick = async function() {
-                    const applyRes = await fetch('/apply_changes', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            session_id: '{{ session_id }}',
-                            file_name: lastFileName,
-                            new_content: lastModifiedCode
-                        })
-                    });
-                    const applyData = await applyRes.json();
-                    
-                    if (applyData.error) {
-                        codePreview.innerHTML += `<div class='mt-2 alert alert-danger'>${applyData.error}</div>`;
-                    } else {
-                        codePreview.innerHTML += `<div class='mt-2 text-success'>${applyData.result}</div>`;
-                    }
+                
+                // 로컬에만 적용 버튼 이벤트
+                if (document.getElementById('apply-btn')) {
+                    document.getElementById('apply-btn').onclick = async function() {
+                        const applyRes = await fetch('/apply_changes', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                session_id: '{{ session_id }}',
+                                file_name: lastFileName,
+                                new_content: lastModifiedCode,
+                                push_to_github: false
+                            })
+                        });
+                        const applyData = await applyRes.json();
+                        
+                        if (applyData.error) {
+                            codePreview.innerHTML += `<div class='mt-2 alert alert-danger'>${applyData.error}</div>`;
+                        } else {
+                            codePreview.innerHTML += `<div class='mt-2 alert alert-success'>${applyData.result}</div>`;
+                        }
+                    };
+                }
+                
+                // GitHub 푸시 버튼 이벤트
+                if (document.getElementById('push-btn')) {
+                    document.getElementById('push-btn').onclick = function() {
+                        document.getElementById('confirmation-msg').style.display = 'block';
+                        this.style.display = 'none';
+                        if (document.getElementById('apply-btn')) {
+                            document.getElementById('apply-btn').style.display = 'none';
+                        }
+                    };
+                }
+                
+                // 확인 버튼 이벤트
+                if (document.getElementById('confirm-push')) {
+                    document.getElementById('confirm-push').onclick = async function() {
+                        const applyRes = await fetch('/apply_changes', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                session_id: '{{ session_id }}',
+                                file_name: lastFileName,
+                                new_content: lastModifiedCode,
+                                push_to_github: true,
+                                commit_msg: "AI 코드 자동 수정 및 GitHub 반영"
+                            })
+                        });
+                        const applyData = await applyRes.json();
+                        
+                        if (applyData.error) {
+                            codePreview.innerHTML += `<div class='mt-2 alert alert-danger'>${applyData.error}</div>`;
+                        } else {
+                            let resultClass = applyData.pushed_to_github ? 'success' : 'warning';
+                            codePreview.innerHTML += `<div class='mt-2 alert alert-${resultClass}'>${applyData.result}</div>`;
+                        }
+                    };
+                }
+                
+                // 취소 버튼 이벤트
+                if (document.getElementById('cancel-push')) {
+                    document.getElementById('cancel-push').onclick = function() {
+                        document.getElementById('confirmation-msg').style.display = 'none';
+                        if (document.getElementById('push-btn')) {
+                            document.getElementById('push-btn').style.display = 'inline-block';
+                        }
+                        if (document.getElementById('apply-btn')) {
+                            document.getElementById('apply-btn').style.display = 'inline-block';
+                        }
+                    };
                 }
             } else {
                 codePreview.innerHTML = '';
