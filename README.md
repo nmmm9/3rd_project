@@ -9,23 +9,23 @@
 <table>
   <tr>
     <td align="center">
-      <img src="D:\YiKyeong\SK networks AI\유리" width="100"><br />
+      <img src="D:\YiKyeong\SK networks AI\유리.png" width="100"><br />
       <sub><b>김이경</b></sub>
     </td>
     <td align="center">
-      <img src="D:\YiKyeong\SK networks AI\스노우맨" width="100"><br />
+      <img src="D:\YiKyeong\SK networks AI\스노우맨.png" width="100"><br />
       <sub><b>노명구</b></sub>
     </td>
     <td align="center">
-      <img src="D:\YiKyeong\SK networks AI\고뭉치" width="100"><br />
+      <img src="D:\YiKyeong\SK networks AI\고뭉치.png" width="100"><br />
       <sub><b>지상원</b></sub>
     </td>
     <td align="center">
-      <img src="D:\YiKyeong\SK networks AI\짱구" width="100"><br />
+      <img src="D:\YiKyeong\SK networks AI\짱구.png" width="100"><br />
       <sub><b>허한결</b></sub>
     </td>
     <td align="center">
-      <img src="D:\YiKyeong\SK networks AI\봉미선" width="100"><br />
+      <img src="D:\YiKyeong\SK networks AI\봉미선.png" width="100"><br />
       <sub><b>황차해</b></sub>
     </td>
   </tr>
