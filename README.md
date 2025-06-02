@@ -11,11 +11,11 @@
       <sub><b>김이경</b></sub>
     </td>
     <td align="center">
-      <img src="img/스노우맨.PNG" width="100"><br />
+      <img src="img/스노우맨.PNG" width="130"><br />
       <sub><b>노명구</b></sub>
     </td>
     <td align="center">
-      <img src="img/고뭉치.PNG" width="100"><br />
+      <img src="img/고뭉치.PNG" width="130"><br />
       <sub><b>지상원</b></sub>
     </td>
     <td align="center">
