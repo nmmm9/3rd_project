@@ -9,10 +9,10 @@
       <img src="img/유리.PNG" width="100" />
     </td>
     <td align="center">
-      <img src="img/스노우맨.PNG" width="130" />
+      <img src="img/스노우맨.PNG" width="100" />
     </td>
     <td align="center">
-      <img src="img/고뭉치.PNG" width="130" />
+      <img src="img/원장.PNG" width="100" />
     </td>
     <td align="center">
       <img src="img/짱구.PNG" width="100" />
