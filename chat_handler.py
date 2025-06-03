@@ -238,7 +238,7 @@ def handle_chat(session_id, message):
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": tag_prompt}],
                 temperature=0.0,
-                max_tokens=32
+                max_tokens=64
             )
             question_role_tag = tag_resp.choices[0].message.content.strip()
             print(f"[DEBUG] 질문 의도 태그: {question_role_tag}")
@@ -414,7 +414,7 @@ def handle_chat(session_id, message):
             messages=[{"role": "system", "content": SYSTEM_PROMPT_QA},
                       {"role": "user", "content": prompt}],
             temperature=0.2,
-            max_tokens=2048
+            max_tokens=4096
         )
         
         # 응답 처리
