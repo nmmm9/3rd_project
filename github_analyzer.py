@@ -631,7 +631,7 @@ class RepositoryEmbedder:
                         model="gpt-3.5-turbo",
                         messages=[{"role": "user", "content": tag_prompt}],
                         temperature=0.0,
-                        max_tokens=32
+                        max_tokens=64
                     )
                     role_tag = tag_resp.choices[0].message.content.strip()
                     print(f"[INFO] 역할 태깅 결과: 파일={file.get('path')}, 청크={i}, 역할={role_tag}")
