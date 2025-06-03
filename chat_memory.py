@@ -34,10 +34,21 @@ def init_memory_client():
         return None
 
 # OpenAI 임베딩 함수 생성
-openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    model_name="text-embedding-3-small"
-)
+try:
+    openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model_name="text-embedding-3-small"
+    )
+except TypeError as e:
+    # 새로운 OpenAI 클라이언트 버전을 위한 대체 초기화 방법
+    print("[INFO] 새로운 OpenAI 클라이언트 방식으로 초기화를 시도합니다.")
+    import openai
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model_name="text-embedding-3-small",
+        client=client
+    )
 
 # 메모리 클라이언트 초기화
 memory_client = init_memory_client()
