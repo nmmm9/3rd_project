@@ -3,78 +3,256 @@
 <head>
     <meta charset="UTF-8">
     <title>GitHub AI 코드 분석 챗봇</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+        }
+        
+        .loader {
+          position: relative;
+          width: 120px;
+          height: 90px;
+          margin: 0 auto;
+        }
+
+        .loader:before {
+          content: "";
+          position: absolute;
+          bottom: 30px;
+          left: 50px;
+          height: 30px;
+          width: 30px;
+          border-radius: 50%;
+          background: #5955d4;
+          animation: loading-bounce 0.5s ease-in-out infinite alternate;
+        }
+
+        .loader:after {
+          content: "";
+          position: absolute;
+          right: 0;
+          top: 0;
+          height: 7px;
+          width: 45px;
+          border-radius: 4px;
+          box-shadow: 0 5px 0 #f2f2f2, -35px 50px 0 #f2f2f2, -70px 95px 0 #f2f2f2;
+          animation: loading-step 1s ease-in-out infinite;
+        }
+
+        @keyframes loading-bounce {
+          0% {
+            transform: scale(1, 0.7);
+          }
+
+          40% {
+            transform: scale(0.8, 1.2);
+          }
+
+          60% {
+            transform: scale(1, 1);
+          }
+
+          100% {
+            bottom: 140px;
+          }
+        }
+
+        @keyframes loading-step {
+          0% {
+            box-shadow: 0 10px 0 rgba(0, 0, 0, 0),
+                    0 10px 0 #f2f2f2,
+                    -35px 50px 0 #f2f2f2,
+                    -70px 90px 0 #f2f2f2;
+          }
+
+          100% {
+            box-shadow: 0 10px 0 #f2f2f2,
+                    -35px 50px 0 #f2f2f2,
+                    -70px 90px 0 #f2f2f2,
+                    -70px 90px 0 rgba(0, 0, 0, 0);
+          }
+        }
+    </style>
 </head>
-<body class="container py-5">
-    <h2 class="mb-4">GitHub AI 코드 분석 챗봇</h2>
-    <form id="analyze-form">
-        <div class="mb-3">
-            <label for="repo-url" class="form-label">GitHub 저장소 URL</label>
-            <input type="url" class="form-control" id="repo-url" name="repo_url" required>
+<body class="bg-gray-900 text-gray-300 min-h-screen">
+<div class="flex flex-col min-h-screen">
+<!-- 상단 네비게이터 -->
+<header class="bg-gray-800 p-3 flex items-center justify-between border-b border-gray-700" style="height: 100px; overflow: visible;">
+  <div class="flex items-center">
+    <span class="material-icons text-gray-400 mr-3">menu</span>
+    <img src="/static/logo.jpg" alt="logo" class="h-36 w-36 object-contain mr-2" style="margin-top: -16px; margin-bottom: -16px;" />
+    <span class="text-white font-semibold ml-3 text-lg"></span>
+  </div>
+  <div class="flex items-center">
+    <div class="relative mr-4">
+      <input class="bg-gray-700 text-gray-300 placeholder-gray-500 rounded-md py-1.5 px-3 pl-8 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" placeholder="/ Type to search" style="width: 300px;" type="text"/>
+      <span class="material-icons absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 text-lg">search</span>
+    </div>
+    <button class="p-1.5 rounded-md hover:bg-gray-700 mr-2">
+      <span class="material-icons text-gray-400">add</span>
+    </button>
+    <button class="p-1.5 rounded-md hover:bg-gray-700 mr-2">
+      <span class="material-icons text-gray-400">play_arrow</span>
+    </button>
+    <button class="p-1.5 rounded-md hover:bg-gray-700 mr-2">
+      <span class="material-icons text-gray-400">inbox</span>
+    </button>
+    <img alt="User avatar" class="w-8 h-8 rounded-full" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8ljbNzHJUH9ZC9WD5AFSxwpOS3_ZcKoBsLH4ppNnwv7l3PC3qZkbjVVuRXDv_LB2aLAVzFpGwFvpgU939wCp2HDeAroJdPNVKcOjo-5whV-vaimG-X5ivF_RqhmCDcnM2Bi5WXW47zGRSkP87NchAS8fDloSnEPGY0npOYffb2D5qh2IzUJZUTY6fiJmDe041cG7cQk4McvdpSkgvIh0XcwZREUgolNXnwo0yjX29hajqa2PMtaJeo8ic779fqzftRvUOJJdkRck"/>
+  </div>
+</header>
+
+<!-- 메인 컨텐츠 영역 -->
+<div class="flex flex-1">
+  <!-- 왼쪽 사이드바 네비게이션 -->
+  <div class="bg-gray-800 w-64 border-r border-gray-700 flex-shrink-0 hidden md:block">
+    <div class="p-4">
+      <div class="mb-6">
+        <h2 class="text-white font-semibold mb-3">Top repositories</h2>
+        <div class="flex justify-between items-center mb-2">
+          <input type="text" placeholder="Find a repository..." class="w-full bg-gray-700 text-gray-300 rounded-md py-1 px-2 text-sm border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500">
         </div>
-        <div class="mb-3">
-            <label for="token" class="form-label">Personal Access Token (선택)</label>
-            <input type="password" class="form-control" id="token" name="token">
-        </div>
-        <button type="submit" class="button-icon">
-          <span class="icon">
-            <svg viewBox="0 0 24 24">
-                <path
-                  fill="#222229"
-                  d="M12 0.296997C5.37 0.296997 0 5.67 0 12.297C0 17.6 3.438 22.097 8.205 23.682C8.805 23.795 9.025 23.424 9.025 23.105C9.025 22.82 9.015 22.065 9.01 21.065C5.672 21.789 4.968 19.455 4.968 19.455C4.422 18.07 3.633 17.7 3.633 17.7C2.546 16.956 3.717 16.971 3.717 16.971C4.922 17.055 5.555 18.207 5.555 18.207C6.625 20.042 8.364 19.512 9.05 19.205C9.158 18.429 9.467 17.9 9.81 17.6C7.145 17.3 4.344 16.268 4.344 11.67C4.344 10.36 4.809 9.29 5.579 8.45C5.444 8.147 5.039 6.927 5.684 5.274C5.684 5.274 6.689 4.952 8.984 6.504C9.944 6.237 10.964 6.105 11.984 6.099C13.004 6.105 14.024 6.237 14.984 6.504C17.264 4.952 18.269 5.274 18.269 5.274C18.914 6.927 18.509 8.147 18.389 8.45C19.154 9.29 19.619 10.36 19.619 11.67C19.619 16.28 16.814 17.295 14.144 17.59C14.564 17.95 14.954 18.686 14.954 19.81C14.954 21.416 14.939 22.706 14.939 23.096C14.939 23.411 15.149 23.786 15.764 23.666C20.565 22.092 24 17.592 24 12.297C24 5.67 18.627 0.296997 12 0.296997Z"
-                ></path>
-              </svg>
-          </span>
-          <span class="cube">
-            <span class="side front">Analyze a project</span>
-            <span class="side top">from GitHub</span>
-          </span>
-        </button>
-    </form>
-    <div id="status" class="mt-4"></div>
-    <!-- 햄스터 로딩 오버레이 -->
-    <div id="loading-overlay" class="loading-overlay" style="display:none">
-      <div>
-        <div class="wheel-and-hamster">
-          <div class="wheel"></div>
-          <div class="hamster">
-            <div class="hamster__body">
-              <div class="hamster__head">
-                <div class="hamster__ear"></div>
-                <div class="hamster__eye"></div>
-                <div class="hamster__nose"></div>
-              </div>
-              <div class="hamster__limb hamster__limb--fr"></div>
-              <div class="hamster__limb hamster__limb--fl"></div>
-              <div class="hamster__limb hamster__limb--br"></div>
-              <div class="hamster__limb hamster__limb--bl"></div>
-              <div class="hamster__tail"></div>
-            </div>
-          </div>
-          <div class="spoke"></div>
-        </div>
-        <div id="progress-container" style="text-align:center; margin-top:2em; width:100%; max-width:500px;">
-          <div id="progress-status" style="font-size:1.3em; color:#333; font-weight:500; margin-bottom:10px;">프로젝트를 분석 중입니다...</div>
-          <div class="progress" style="height:20px;">
-            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
-          </div>
+        <div class="mt-3">
+          <ul class="space-y-2">
+            <li class="flex items-center">
+              <span class="w-4 h-4 mr-2 rounded-full bg-green-500 flex-shrink-0"></span>
+              <a href="#" class="text-gray-300 hover:text-white text-sm truncate">sample/coding_test_study</a>
+            </li>
+            <li class="flex items-center">
+              <span class="w-4 h-4 mr-2 rounded-full bg-blue-500 flex-shrink-0"></span>
+              <a href="#" class="text-gray-300 hover:text-white text-sm truncate">sample/ai_project</a>
+            </li>
+            <li class="flex items-center">
+              <span class="w-4 h-4 mr-2 rounded-full bg-orange-500 flex-shrink-0"></span>
+              <a href="#" class="text-gray-300 hover:text-white text-sm truncate">sample/code-analyzer</a>
+            </li>
+          </ul>
+          <button class="text-xs text-gray-400 hover:text-gray-200 mt-3 flex items-center">
+            <span>Show more</span>
+          </button>
         </div>
       </div>
     </div>
-    <script>
+  </div>
+  <!-- 메인 컨텐츠 -->
+  <div class="flex-1">
+<main class="flex-1 flex flex-row items-start justify-center p-8">
+  <!-- 왼쪽: 입력 폼 영역 -->
+  <div class="w-full max-w-md bg-gray-800 border border-gray-700 rounded-lg p-6 mt-8 shadow-lg mr-6">
+    <h2 class="mb-5 text-2xl font-bold text-white">GitHub AI 코드 분석 챗봇</h2>
+    <form id="analyze-form" class="space-y-5">
+      <div>
+        <label for="repo-url" class="block mb-2 text-sm font-medium text-gray-200">GitHub 저장소 URL</label>
+        <input type="url" class="w-full bg-gray-700 border border-gray-600 text-gray-200 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500" id="repo-url" name="repo_url" placeholder="https://github.com/username/repository" required>
+      </div>
+      <div>
+        <label for="token" class="block mb-2 text-sm font-medium text-gray-200">Personal Access Token (선택)</label>
+        <input type="password" class="w-full bg-gray-700 border border-gray-600 text-gray-200 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500" id="token" name="token" placeholder="ghp_xxxxxxxxxxxxxxxx">
+      </div>
+      <button type="submit" class="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md transition-all duration-200">
+        <span class="material-icons mr-2">search</span> 프로젝트 분석 시작
+      </button>
+    </form>
+    <div id="status" class="mt-4 text-center text-red-400"></div>
+  </div>
+  
+  <!-- 오른쪽: 토큰 발급 방법 안내 -->
+  <div class="w-full max-w-md bg-gray-800 border border-gray-700 rounded-lg p-6 mt-8 shadow-lg">
+    <h2 class="mb-4 text-xl font-bold text-white">GitHub 토큰 발급 방법</h2>
+    <div class="text-gray-300 space-y-4 text-sm">
+      <p class="mb-2">비공개 저장소를 분석하려면 GitHub Personal Access Token이 필요합니다.</p>
+      
+      <div class="bg-gray-700 p-4 rounded-md">
+        <h3 class="font-semibold text-white mb-2">토큰 발급 단계</h3>
+        <ol class="list-decimal list-inside space-y-2">
+          <li>GitHub 계정에 로그인합니다.</li>
+          <li>우측 상단의 프로필 아이콘을 클릭 후 <span class="text-blue-400">Settings</span>를 선택합니다.</li>
+          <li>좌측 하단 메뉴에서 <span class="text-blue-400">Developer settings</span>를 클릭합니다.</li>
+          <li><span class="text-blue-400">Personal access tokens</span> → <span class="text-blue-400">Tokens (classic)</span>을 선택합니다.</li>
+          <li><span class="text-blue-400">Generate new token</span> 버튼을 클릭합니다.</li>
+          <li>토큰 이름을 입력하고 <span class="text-blue-400">repo</span> 권한을 체크합니다.</li>
+          <li>페이지 하단의 <span class="text-blue-400">Generate token</span> 버튼을 클릭합니다.</li>
+          <li>생성된 토큰을 복사하여 위 입력창에 붙여넣습니다.</li>
+        </ol>
+      </div>
+      
+      <div class="bg-yellow-900 bg-opacity-40 p-3 rounded-md border border-yellow-700">
+        <p class="text-yellow-300 flex items-start">
+          <span class="material-icons mr-2 text-yellow-400">warning</span>
+          <span>토큰은 생성 직후 한 번만 표시됩니다. 안전한 곳에 보관하세요.</span>
+        </p>
+      </div>
+    </div>
+  </div>
+  <!-- CSS 애니메이션 로딩 오버레이 -->
+  <div id="loading-overlay" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" style="display:none">
+    <div class="flex flex-col items-center">
+      <div class="loader mb-12"></div>
+      <div id="progress-container" class="mt-4 w-full max-w-2xl mx-auto text-center">
+        <div id="progress-status" class="text-2xl text-gray-200 font-bold mb-4">프로젝트를 분석 중입니다...</div>
+        <div class="w-full bg-gray-700 rounded-full h-10 overflow-hidden">
+          <div id="progress-bar" class="bg-blue-500 h-10 text-xl font-extrabold flex items-center justify-center transition-all duration-300" style="width:0%">0%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+<script>
         document.getElementById('analyze-form').onsubmit = async function(e) {
             e.preventDefault();
-            
-            // 로딩 오버레이 표시 및 상태 초기화
             document.getElementById('loading-overlay').style.display = 'flex';
             document.getElementById('status').innerText = '분석 중...';
             document.getElementById('progress-bar').style.width = '0%';
             document.getElementById('progress-bar').innerText = '0%';
             document.getElementById('progress-status').innerText = '분석 준비 중...';
             
+            // 진행률이 멈추지 않도록 가상 진행률 업데이트 함수
+            let fakeProgress = 0;
+            let progressInterval = null;
+            
+            const startFakeProgress = () => {
+                progressInterval = setInterval(() => {
+                    // 실제 진행 상황이 없을 때 10%에서 멈추지 않고 천천히 진행
+                    if (fakeProgress < 90) {
+                        // 처음에는 빠르게 10%까지 증가, 그 후 천천히 증가
+                        const increment = fakeProgress < 10 ? 1 : 0.2;
+                        fakeProgress += increment;
+                        
+                        // 진행률 표시 업데이트
+                        const displayProgress = Math.floor(fakeProgress);
+                        document.getElementById('progress-bar').style.width = `${displayProgress}%`;
+                        document.getElementById('progress-bar').innerText = `${displayProgress}%`;
+                        
+                        // 진행 상태 메시지 업데이트
+                        if (displayProgress < 10) {
+                            document.getElementById('progress-status').innerText = '저장소 정보 수집 중...';
+                        } else if (displayProgress < 30) {
+                            document.getElementById('progress-status').innerText = '파일 구조 분석 중...';
+                        } else if (displayProgress < 50) {
+                            document.getElementById('progress-status').innerText = '코드 청크 생성 중...';
+                        } else if (displayProgress < 70) {
+                            document.getElementById('progress-status').innerText = '임베딩 생성 중...';
+                        } else {
+                            document.getElementById('progress-status').innerText = '분석 데이터 처리 중...';
+                        }
+                    }
+                }, 300);
+            };
+            
+            const stopFakeProgress = () => {
+                if (progressInterval) {
+                    clearInterval(progressInterval);
+                    progressInterval = null;
+                }
+            };
+            
             try {
-                // 스트리밍 응답을 위한 fetch 요청
+                // 가상 진행률 시작
+                startFakeProgress();
+                
                 const res = await fetch('/analyze', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -84,13 +262,11 @@
                     })
                 });
                 
-                // 응답이 성공적이지 않으면 에러 처리
                 if (!res.ok) {
                     const errorData = await res.json();
                     throw new Error(errorData.error || '서버 오류');
                 }
                 
-                // 스트리밍 응답 처리를 위한 reader 설정
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
                 let sessionId = null;
@@ -105,21 +281,27 @@
                     for (const line of lines) {
                         try {
                             const data = JSON.parse(line);
-                            console.log('Progress update:', data);
                             
-                            // 진행 상태 업데이트
+                            // 실제 진행률이 있으면 가상 진행률 중지하고 실제 진행률 표시
                             if (data.progress >= 0) {
-                                document.getElementById('progress-bar').style.width = `${data.progress}%`;
-                                document.getElementById('progress-bar').innerText = `${data.progress}%`;
-                                document.getElementById('progress-status').innerText = data.status || '분석 중...';
+                                stopFakeProgress(); // 실제 진행률이 오면 가상 진행률 중지
+                                
+                                // 실제 진행률이 가상 진행률보다 낮으면 무시 (진행률이 뒤로 가지 않도록)
+                                if (data.progress > fakeProgress) {
+                                    document.getElementById('progress-bar').style.width = `${data.progress}%`;
+                                    document.getElementById('progress-bar').innerText = `${data.progress}%`;
+                                    fakeProgress = data.progress; // 실제 진행률 저장
+                                }
+                                
+                                if (data.status) {
+                                    document.getElementById('progress-status').innerText = data.status;
+                                }
                             }
                             
-                            // 에러 처리
                             if (data.error) {
                                 throw new Error(data.error);
                             }
                             
-                            // 분석 완료 시 세션 ID 저장
                             if (data.progress === 100 && data.session_id) {
                                 sessionId = data.session_id;
                             }
@@ -128,21 +310,17 @@
                         }
                     }
                 }
-                
-                // 분석 완료 후 채팅 페이지로 이동
                 if (sessionId) {
                     window.location.href = `/chat/${sessionId}`;
                 } else {
                     throw new Error('세션 ID를 받지 못했습니다.');
                 }
-                
             } catch (error) {
-                // 오류 처리
                 document.getElementById('loading-overlay').style.display = 'none';
                 document.getElementById('status').innerText = `오류: ${error.message}`;
                 console.error('분석 오류:', error);
             }
         }
-    </script>
+</script>
 </body>
 </html> 
