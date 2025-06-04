@@ -193,6 +193,10 @@ def handle_chat(session_id, message):
     
     print(f"[DEBUG] 세션 데이터 키: {list(session_data.keys())}")
     
+    context_chunks = []
+    full_file_contexts = []
+    directory_structure = ""
+    
     # 1. 질문 임베딩 생성
     print(f"[DEBUG] 질문 임베딩 생성 시작: '{message[:50]}...'")
     try:
@@ -484,6 +488,19 @@ def handle_chat(session_id, message):
         context = '\n\n'.join(context_chunks)
         context = f"아래는 [파일/함수/클래스/라인/역할] 단위로 추출된 컨텍스트입니다.\n{context}"
         print(f"[DEBUG] 유사 코드 청크 {len(context_chunks)}개 찾음 (총 {len(context)} 문자)")
+        print("[DEBUG] 컨텍스트 구성 요약:")
+        if full_file_contexts: # 컨텍스트가 전체 파일 내용으로 구성된 경우
+            print("  컨텍스트는 다음 전체 파일 내용으로 구성됩니다:")
+            for i, file_context_str in enumerate(full_file_contexts):
+                file_header = file_context_str.partition('\n')[0] # "// FILE: ..." 부분 추출
+                print(f"    {i+1}. {file_header}")
+        elif context_chunks: # 컨텍스트가 코드 청크로 구성된 경우
+            print("  컨텍스트는 다음 코드 청크의 메타데이터로 구성됩니다:")
+            for i, chunk_str in enumerate(context_chunks):
+                metadata_header = chunk_str.partition('\n')[0] # "[메타데이터...]" 부분 추출
+                print(f"    {i+1}. {metadata_header}")
+        else: # 컨텍스트 내용이 없는 경우
+            print("  컨텍스트에 포함된 내용이 없습니다.")
         
         # 검색된 파일 경로 로깅
         if 'metadatas' in results and results['metadatas'] and results['metadatas'][0]:
@@ -572,6 +589,7 @@ def handle_chat(session_id, message):
             history_lines = conversation_history.strip().split(newline)
             conversation_count = sum(1 for line in history_lines if line.startswith('[관련 대화'))
             print(f"[CHAT_HANDLER] 가져온 관련 대화 수: {conversation_count}개, 전체 길이: {len(conversation_history)} 문자")
+            print(f"[DEBUG] LLM에 전달될 실제 대화 기록 내용 (최대 500자):\n{conversation_history[:500]}{'...' if len(conversation_history) > 500 else ''}")
             
             # 각 대화 삼합수 출력 (디버깅용)
             current_conversation = ""
@@ -586,7 +604,6 @@ def handle_chat(session_id, message):
             if current_conversation:
                 print(f"[CHAT_HANDLER] 대화 삼합수: {hash(current_conversation) % 1000}")
         
-        
         # 프롬프트 생성 (대화 기록 포함)
         prompt = PROMPT_TEMPLATE.format(
             context=context, 
@@ -595,6 +612,17 @@ def handle_chat(session_id, message):
             conversation_history=conversation_history
         )
         print("\n[LLM 프롬프트]\n" + prompt + "\n")  # 프롬프트 확인용 출력
+
+        # 대화 기록이 최종 프롬프트에 포함되었는지 확인
+        if conversation_history and conversation_history != '이전 대화 없음':
+            if conversation_history in prompt:
+                print(f"[INFO] 성공: 이전 대화 기록 (길이: {len(conversation_history)})이 최종 프롬프트에 포함되었습니다.")
+            else:
+                print(f"[WARNING] 실패: 이전 대화 기록이 최종 프롬프트에 포함되지 않았습니다. 기록 앞부분: {conversation_history[:200]}...")
+        elif conversation_history == '이전 대화 없음':
+            print(f"[INFO] '이전 대화 없음' 상태이므로 프롬프트 포함 여부를 확인하지 않습니다.")
+        else: # This case implies conversation_history is an empty string or None, if not '이전 대화 없음'
+            print(f"[INFO] conversation_history가 비어있거나 (None or '') 예상치 못한 상태이므로 프롬프트 포함 여부를 확인하지 않습니다: '{conversation_history}'")
         print(f"[DEBUG] 프롬프트 길이: {len(prompt)} 문자")
         
         # 프롬프트 길이 제한 확인
@@ -1037,19 +1065,78 @@ def handle_modify_request(session_id, message):
         print("\n[LLM 프롬프트 - 코드수정]\n" + prompt + "\n")  # 프롬프트 확인용 출력
         print(f"[DEBUG] 코드수정 프롬프트 길이: {len(prompt)} 문자")
         
-        # 프롬프트 길이 제한 확인
-        if len(prompt) > 100000:  # OpenAI API의 토큰 제한을 고려한 값
-            print(f"[WARNING] 코드수정 프롬프트가 너무 깁니다. 컨텍스트 일부를 잘라냅니다.")
-            # 컨텍스트 길이 제한
-            max_context_length = 80000  # 적절한 길이로 조정
-            truncated_context = context[:max_context_length] + "\n... (컨텍스트 길이 제한으로 인해 일부 내용이 생략되었습니다) ...\n\n=== 이전 대화 기록 ===\n\n" + conversation_history
+        # 프롬프트 길이 제한 확인 
+        # OpenAI API의 토큰 제한(예: gpt-4o TPM 30000)을 고려하여 프롬프트 크기를 관리합니다.
+        # 1 토큰은 대략 4문자에 해당한다고 가정하고, 안전 마진을 적용합니다.
+        # 목표: 요청 토큰 < 28000 (약 112,000 문자) 이내가 되도록 관리.
+
+        MAX_PROMPT_CHARS = 95000  # 전체 프롬프트에 대한 안전한 문자 제한 (약 23750 토큰)
+        MAX_CONTEXT_ONLY_CHARS = 50000  # 순수 context 변수 (코드) 에 대한 제한 (약 12500 토큰)
+        MAX_HISTORY_CHARS = 15000  # 대화 기록에 대한 제한 (약 3750 토큰)
+
+        if len(prompt) > MAX_PROMPT_CHARS:
+            print(f"[WARNING] 코드수정 프롬프트가 너무 깁니다 (현재: {len(prompt)}자, 최종 제한: {MAX_PROMPT_CHARS}자). 컨텍스트와 대화 기록을 줄입니다.")
+
+            # 원본 context와 history 복사 (길이 변경 로깅용)
+            original_context_for_truncation = str(context)
+            original_history_for_truncation = str(conversation_history)
+
+            # 1. context 줄이기
+            if len(context) > MAX_CONTEXT_ONLY_CHARS:
+                context = context[:MAX_CONTEXT_ONLY_CHARS] + "\n... (코드 컨텍스트가 축소되었습니다) ..."
+                print(f"[DEBUG] 코드 컨텍스트 축소: 원본 {len(original_context_for_truncation)}자 -> 현재 {len(context)}자 (제한: {MAX_CONTEXT_ONLY_CHARS}자)")
+
+            # 2. conversation_history 줄이기
+            if conversation_history != "이전 대화 없음" and len(conversation_history) > MAX_HISTORY_CHARS:
+                conversation_history = conversation_history[:MAX_HISTORY_CHARS] + "\n... (대화 기록이 축소되었습니다) ..."
+                print(f"[DEBUG] 대화 기록 축소: 원본 {len(original_history_for_truncation)}자 -> 현재 {len(conversation_history)}자 (제한: {MAX_HISTORY_CHARS}자)")
+            
+            # 3. 프롬프트 재구성 및 최종 길이 확인
             prompt = MODIFY_PROMPT_TEMPLATE.format(
-                context=truncated_context, 
+                context=context,
                 request=message,
-                directory_structure=directory_structure,
-                conversation_history=""
+                directory_structure=directory_structure, # 디렉토리 구조는 보통 크지 않으므로 일단 유지
+                conversation_history=conversation_history
             )
-            print(f"[DEBUG] 수정된 코드수정 프롬프트 길이: {len(prompt)} 문자")
+            print(f"[DEBUG] 1차 축소 후 코드수정 프롬프트 길이: {len(prompt)} 문자")
+
+            # 그래도 길면, 최후의 수단으로 context를 더 공격적으로 줄임
+            if len(prompt) > MAX_PROMPT_CHARS:
+                print(f"[WARNING] 추가 축소 후에도 프롬프트가 너무 깁니다 (현재: {len(prompt)}자). 코드 컨텍스트를 더 줄입니다.")
+                # 필요한 추가 축소량 계산 (프롬프트 템플릿 자체의 길이도 고려해야 함)
+                # MODIFY_PROMPT_TEMPLATE에서 context, request, directory_structure, conversation_history를 제외한 순수 템플릿 문자열 길이 추정
+                placeholder_values = {'context':'', 'request':'', 'directory_structure':'', 'conversation_history':''}
+                template_base_len = len(MODIFY_PROMPT_TEMPLATE.format(**placeholder_values))
+                
+                # 현재 주요 변수들의 길이
+                len_req = len(message)
+                len_dir = len(directory_structure)
+                len_hist = len(conversation_history if conversation_history != "이전 대화 없음" else "")
+                
+                # context에 할당 가능한 최대 길이
+                allowed_len_for_context = MAX_PROMPT_CHARS - (template_base_len + len_req + len_dir + len_hist)
+                
+                # context가 할당 가능한 길이를 초과하는 경우, 해당 길이로 자름 (최소 100자 보장)
+                if len(context) > allowed_len_for_context and allowed_len_for_context > 100:
+                    context = context[:allowed_len_for_context] + "\n... (코드 컨텍스트가 추가로 축소되었습니다) ..."
+                    print(f"[DEBUG] 코드 컨텍스트 추가 축소: {len(context)}자 (할당 가능량: {allowed_len_for_context}자)")
+                elif len(context) > 100: # 할당 가능량이 너무 작으면 최소한으로 줄임
+                    context = context[:100] + "\n... (코드 컨텍스트가 최소한으로 축소되었습니다) ..."
+                    print(f"[DEBUG] 코드 컨텍스트 최소 축소: {len(context)}자")
+                else: # context가 이미 매우 짧은 경우
+                    print(f"[DEBUG] 코드 컨텍스트가 이미 매우 짧아 추가 축소하지 않음: {len(context)}자")
+
+                prompt = MODIFY_PROMPT_TEMPLATE.format(
+                    context=context,
+                    request=message,
+                    directory_structure=directory_structure,
+                    conversation_history=conversation_history
+                )
+                print(f"[DEBUG] 최후 수단 적용 후 프롬프트 길이: {len(prompt)} 문자")
+            
+            # 최종적으로 프롬프트가 여전히 너무 길면 경고만 남김 (API 호출은 진행)
+            if len(prompt) > MAX_PROMPT_CHARS:
+                print(f"[CRITICAL WARNING] 모든 축소 노력에도 불구하고 프롬프트가 여전히 설정된 제한({MAX_PROMPT_CHARS}자)을 초과합니다: {len(prompt)}자. API 오류 가능성이 있습니다.")
         
         # LLM 호출
         print(f"[DEBUG] 코드수정용 OpenAI API 호출 시작 (model=gpt-4o, temperature=0.2, max_tokens=4096)")
