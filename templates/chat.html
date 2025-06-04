@@ -56,12 +56,41 @@
         
         .msg-ai > div {
             background-color: #2d3748;
+            color: #f3f4f6; /* Added for better text readability */
             border-radius: 12px 12px 12px 0;
             max-width: 85%;
             padding: 12px 16px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
         
+        /* Enhanced readability for AI messages */
+        .msg-ai > div p {
+            margin-bottom: 0.8rem; /* Space between paragraphs */
+            line-height: 1.65;    /* Space between lines within a paragraph */
+        }
+        .msg-ai > div ul, .msg-ai > div ol {
+            margin-left: 1.5rem;  /* Indentation for lists */
+            margin-bottom: 0.8rem;/* Space after lists */
+            list-style-position: outside; /* Ensure bullets/numbers are outside the text flow */
+        }
+        .msg-ai > div ul {
+            list-style-type: disc; /* Default bullet for unordered lists */
+        }
+        .msg-ai > div ol {
+            list-style-type: decimal; /* Default numbering for ordered lists */
+        }
+        .msg-ai > div li {
+            margin-bottom: 0.3rem; /* Space between list items */
+        }
+        .msg-ai > div strong, .msg-ai > div b { /* Make bold text slightly more prominent */
+            color: #ffffff; 
+            font-weight: 600;
+        }
+        .msg-ai > div em, .msg-ai > div i { /* Style for italic text */
+            color: #e2e8f0; 
+            font-style: italic;
+        }
+
         .msg-user > div {
             background-color: #3b4a63;
             border-radius: 12px 12px 0 12px;
