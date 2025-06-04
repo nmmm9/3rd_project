@@ -2,278 +2,681 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>챗봇 - GitHub AI 코드 분석</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <title>GitHub AI 코드 분석</title>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <style>
         body {
-            background: #f8fafc;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+            scrollbar-width: thin;
+            scrollbar-color: #4b5563 #1f2937;
         }
-        #chat-box {
-            position: relative;
-            background: #f4f6fb;
-            border-radius: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
         }
-        #chat-box pre {
-            background: #6f95d5 !important;
-            color: #f8f8f2 !important;
-            border-radius: 10px;
-            padding: 1.1em 1.3em;
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+            border-radius: 4px;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-width: 100%;
             overflow-x: auto;
-            font-size: 1.05em;
-            margin-bottom: 0.7em;
-            margin-top: 0.5em;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+            background-color: #1a202c !important;
+            border-radius: 8px;
+            margin: 0.5rem 0;
         }
-        .msg-user {
-            display: flex; justify-content: flex-end; margin-bottom: 10px;
+        
+        /* 채팅 메시지 스타일 개선 */
+        .msg-ai, .msg-user {
+            display: flex;
+            margin-bottom: 1.5rem;
+            animation: fadeIn 0.3s ease-in-out;
         }
-        .msg-user .bubble {
-            background: #e0f2fe; color: #1e293b; border-radius: 18px 18px 0 18px;
-            padding: 12px 18px; max-width: 70%;
-            font-weight: 500;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
+        
         .msg-ai {
-            display: flex; justify-content: flex-start; margin-bottom: 10px;
+            justify-content: flex-start;
         }
-        .msg-ai .bubble {
-            background: #f4f6fb; color: #222; border-radius: 18px 18px 18px 0;
-            padding: 12px 18px; max-width: 70%;
-            border: 1px solid #e5e7eb;
-            font-weight: 500;
-            box-shadow: 0 1px 4px rgba(114, 142, 220, 0.04);
+        
+        .msg-user {
+            justify-content: flex-end;
         }
-        .msg-ai .bubble b { color: #2563eb; }
-        .copy-btn {
-            position: absolute; top: 8px; right: 16px; background: #fff; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; padding: 2px 8px; cursor: pointer; z-index: 2;
+        
+        .msg-ai > div {
+            background-color: #2d3748;
+            color: #f3f4f6; /* Added for better text readability */
+            border-radius: 12px 12px 12px 0;
+            max-width: 85%;
+            padding: 12px 16px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
-        #chat-box pre { position: relative; }
+        
+        /* Enhanced readability for AI messages */
+        .msg-ai > div p {
+            margin-bottom: 0.8rem; /* Space between paragraphs */
+            line-height: 1.65;    /* Space between lines within a paragraph */
+        }
+        .msg-ai > div ul, .msg-ai > div ol {
+            margin-left: 1.5rem;  /* Indentation for lists */
+            margin-bottom: 0.8rem;/* Space after lists */
+            list-style-position: outside; /* Ensure bullets/numbers are outside the text flow */
+        }
+        .msg-ai > div ul {
+            list-style-type: disc; /* Default bullet for unordered lists */
+        }
+        .msg-ai > div ol {
+            list-style-type: decimal; /* Default numbering for ordered lists */
+        }
+        .msg-ai > div li {
+            margin-bottom: 0.3rem; /* Space between list items */
+        }
+        .msg-ai > div strong, .msg-ai > div b { /* Make bold text slightly more prominent */
+            color: #ffffff; 
+            font-weight: 600;
+        }
+        .msg-ai > div em, .msg-ai > div i { /* Style for italic text */
+            color: #e2e8f0; 
+            font-style: italic;
+        }
+
+        .msg-user > div {
+            background-color: #3b4a63;
+            border-radius: 12px 12px 0 12px;
+            max-width: 85%;
+            padding: 12px 16px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        
+        .msg-ai > div, .msg-user > div {
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+        
+        /* 코드 블록 가독성 개선 스타일 */
+        .hljs {
+            font-size: 14px;
+            line-height: 1.5;
+            padding: 1rem;
+            border-radius: 8px;
+            background-color: #1a202c !important;
+            border: 1px solid #374151;
+        }
+        
+        /* 한글 주석 가독성 개선 */
+        .hljs-comment {
+            color: #8bbe9a !important;
+            font-style: italic;
+        }
+        
+        /* 로딩 애니메이션 스타일 */
+        .loading-wrapper {
+          width: 80px;
+          height: 30px;
+          position: relative;
+          z-index: 1;
+          display: inline-block;
+          margin-left: 5px;
+        }
+
+        .loading-circle {
+          width: 8px;
+          height: 8px;
+          position: absolute;
+          border-radius: 50%;
+          background-color: #8b9cb3;
+          left: 15%;
+          transform-origin: 50%;
+          animation: circle7124 .5s alternate infinite ease;
+        }
+
+        @keyframes circle7124 {
+          0% {
+            top: 30px;
+            height: 3px;
+            border-radius: 50px 50px 25px 25px;
+            transform: scaleX(1.7);
+          }
+
+          40% {
+            height: 20px;
+            border-radius: 50%;
+            transform: scaleX(1);
+          }
+
+          100% {
+            top: 0%;
+          }
+        }
+
+        .loading-circle:nth-child(2) {
+          left: 45%;
+          animation-delay: .2s;
+        }
+
+        .loading-circle:nth-child(3) {
+          left: auto;
+          right: 15%;
+          animation-delay: .3s;
+        }
+
+        .loading-shadow {
+          width: 8px;
+          height: 2px;
+          border-radius: 50%;
+          background-color: rgba(0,0,0,0.5);
+          position: absolute;
+          top: 32px;
+          transform-origin: 50%;
+          z-index: -1;
+          left: 15%;
+          filter: blur(1px);
+          animation: shadow046 .5s alternate infinite ease;
+        }
+
+        @keyframes shadow046 {
+          0% {
+            transform: scaleX(1.5);
+          }
+
+          40% {
+            transform: scaleX(1);
+            opacity: .7;
+          }
+
+          100% {
+            transform: scaleX(.2);
+            opacity: .4;
+          }
+        }
+
+        .loading-shadow:nth-child(4) {
+          left: 45%;
+          animation-delay: .2s
+        }
+
+        .loading-shadow:nth-child(5) {
+          left: auto;
+          right: 15%;
+          animation-delay: .3s;
+        }
+        
+        /* GitHub 푸시 버튼 스타일 */
+        .github-push-btn {
+            display: inline-flex;
+            align-items: center;
+            background-color: #238636;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 8px;
+        }
+        
+        .github-push-btn:hover {
+            background-color: #2ea043;
+        }
+        
+        .github-push-btn:active {
+            background-color: #238636;
+        }
+        
+        /* 코드 수정 창 스타일 */
+        .code-edit-container {
+            background-color: #1a202c;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            margin-top: 16px;
+            overflow: hidden;
+        }
+        
+        .code-edit-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background-color: #2d3748;
+            border-bottom: 1px solid #374151;
+        }
+        
+        .code-edit-content {
+            padding: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 </head>
-<body class="container py-5">
-    <h2 class="mb-4">챗봇 - GitHub AI 코드 분석</h2>
-    <div id="repo-summary" class="mb-3">저장소 분석이 완료되었습니다. 질문해주세요!</div>
-    <div id="chat-box" class="border rounded p-3 mb-3" style="height:700px; overflow-y:auto; background:#f8f9fa;"></div>
-    <form id="chat-form" class="d-flex">
-        <input type="text" class="form-control me-2" id="user-input" placeholder="질문 또는 코드 수정 요청 입력..." autocomplete="off" required>
-        <button type="submit" class="btn btn-primary">전송</button>
+<body class="bg-gray-900 text-gray-300 min-h-screen">
+<div class="flex flex-col min-h-screen">
+<!-- 상단 헤더 -->
+<header class="bg-gray-800 p-3 flex items-center justify-between border-b border-gray-700" style="height: 70px;">
+  <div class="flex items-center">
+    <img src="/static/logo.jpg" alt="logo" class="h-36 w-36 object-contain mr-3" />
+    <h1 class="text-white font-semibold text-xl"></h1>
+  </div>
+  <div class="flex items-center">
+    <div id="repo-status" class="text-blue-300 mr-4 text-sm">저장소 분석이 완료되었습니다. 질문해주세요!</div>
+    <img alt="User avatar" class="w-8 h-8 rounded-full" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8ljbNzHJUH9ZC9WD5AFSxwpOS3_ZcKoBsLH4ppNnwv7l3PC3qZkbjVVuRXDv_LB2aLAVzFpGwFvpgU939wCp2HDeAroJdPNVKcOjo-5whV-vaimG-X5ivF_RqhmCDcnM2Bi5WXW47zGRSkP87NchAS8fDloSnEPGY0npOYffb2D5qh2IzUJZUTY6fiJmDe041cG7cQk4McvdpSkgvIh0XcwZREUgolNXnwo0yjX29hajqa2PMtaJeo8ic779fqzftRvUOJJdkRck"/>
+  </div>
+</header>
+
+<!-- 메인 채팅 컨텐츠 영역 -->
+<main class="flex-1 flex flex-col h-full">
+  <!-- 채팅 메시지 표시 영역 -->
+  <div id="chat-box" class="flex-1 p-6 overflow-y-auto bg-gray-900" style="min-height:calc(100vh - 150px);">
+    <!-- 채팅 메시지가 여기에 표시됩니다 -->
+    <div class="msg-ai mb-6">
+      <div>
+        <p>안녕하세요! GitHub 저장소의 코드에 대해 질문하거나 코드 수정을 요청해보세요. 언제든지 도와드리겠습니다! 파일 구조, 함수의 목적, 버그 해결 방법 등 어떤 질문이든 가능합니다.</p>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 코드 미리보기 영역 -->
+  <div id="code-preview" class="bg-gray-800 border-t border-gray-700 p-4 overflow-y-auto" style="max-height:40vh; display:none;">
+    <div class="flex justify-between items-center mb-2">
+      <h3 class="text-white font-medium"></h3>
+      <button id="close-preview" class="text-gray-400 hover:text-white">
+        <span class="material-icons">close</span>
+      </button>
+    </div>
+    <div id="code-preview-content"></div>
+  </div>
+  
+  <!-- 입력 폼 영역 -->
+  <div class="bg-gray-800 border-t border-gray-700 p-4">
+    <form id="chat-form" class="flex gap-2">
+      <input type="text" class="flex-1 bg-gray-700 border border-gray-600 text-gray-200 rounded-md py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" id="user-input" placeholder="질문 또는 코드 수정 요청 입력..." autocomplete="off" required>
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-md transition-all duration-200">전송</button>
     </form>
-    <div id="code-preview" class="mt-4"></div>
-    <script>
-        const chatBox = document.getElementById('chat-box');
-        const codePreview = document.getElementById('code-preview');
-        let lastFileName = '';
-        let lastModifiedCode = '';
-        function isModifyRequest(text) {
-            // 간단한 규칙: "고쳐줘", "수정", "추가", "변경" 등 포함 시 수정 요청으로 간주
-            return /고쳐줘|수정|추가|변경|리팩터|refactor|fix|add|modify/i.test(text);
+  </div>
+</main>
+<script>
+const chatBox = document.getElementById('chat-box');
+const codePreview = document.getElementById('code-preview');
+let lastFileName = '';
+let lastModifiedCode = '';
+function isModifyRequest(text) {
+    // 간단한 규칙: "고쳐줘", "수정", "추가", "변경" 등 포함 시 수정 요청으로 간주
+    return /고쳐줘|수정|추가|변경|리팩터|refactor|fix|add|modify/i.test(text);
+}
+document.getElementById('chat-form').onsubmit = async function(e) {
+    e.preventDefault();
+    const input = document.getElementById('user-input');
+    const userMsg = input.value;
+    chatBox.innerHTML += `<div class="msg-user flex justify-end mb-2"><div class="bg-gray-700 text-white rounded-2xl rounded-br-none px-5 py-3 max-w-[70%] font-medium shadow"> <b class="text-yellow-300">나:</b> ${userMsg}</div></div>`;
+    input.value = '';
+    
+    // AI 응답 로딩 애니메이션 추가
+    const loadingId = 'loading-' + Date.now();
+    chatBox.innerHTML += `
+      <div id="${loadingId}" class="msg-ai flex justify-start mb-2">
+        <div class="bg-gray-600 text-white rounded-2xl rounded-bl-none px-5 py-3 max-w-[70%] font-medium shadow">
+          <b class="text-blue-300">AI:</b>
+          <div class="loading-wrapper">
+            <div class="loading-circle"></div>
+            <div class="loading-circle"></div>
+            <div class="loading-circle"></div>
+            <div class="loading-shadow"></div>
+            <div class="loading-shadow"></div>
+            <div class="loading-shadow"></div>
+          </div>
+        </div>
+      </div>`;
+    chatBox.scrollTop = chatBox.scrollHeight;
+    
+    let url = '/chat';
+    if (isModifyRequest(userMsg)) url = '/modify_request';
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            session_id: '{{ session_id }}',
+            message: userMsg
+        })
+    });
+    const data = await res.json();
+    // 세션 오류 처리
+    if (data.error === 'session_not_found' || data.error === 'search_error') {
+        chatBox.innerHTML += `<div class="bg-red-500 text-white rounded-lg p-4 my-2 text-center"><b>AI:</b> ${marked.parse(data.answer)}</div>`;
+        chatBox.scrollTop = chatBox.scrollHeight;
+        setTimeout(() => {
+            alert('세션이 만료되었거나 오류가 발생했습니다. 메인 페이지로 이동합니다.');
+            window.location.href = '/';
+        }, 3000);
+        return;
+    }
+    // 일반 응답 처리
+    if (data.answer) {
+        // 로딩 애니메이션 제거
+        const loadingElement = document.getElementById(loadingId);
+        if (loadingElement) {
+            loadingElement.remove();
         }
-        document.getElementById('chat-form').onsubmit = async function(e) {
-            e.preventDefault();
-            const input = document.getElementById('user-input');
-            const userMsg = input.value;
-            chatBox.innerHTML += `<div class="msg-user"><div class="bubble"><b>나:</b> ${userMsg}</div></div>`;
-            input.value = '';
-            let url = '/chat';
-            if (isModifyRequest(userMsg)) url = '/modify_request';
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    session_id: '{{ session_id }}',
-                    message: userMsg
-                })
-            });
-            const data = await res.json();
+        
+        // AI 응답 추가
+        chatBox.innerHTML += `
+          <div class="msg-ai flex justify-start mb-2"><div class="bg-gray-600 text-white rounded-2xl rounded-bl-none px-5 py-3 max-w-[70%] font-medium shadow"> <b class="text-blue-300">AI:</b> ${marked.parse(data.answer)} </div></div>`;
+        document.querySelectorAll('#chat-box pre code').forEach((el) => {
+            hljs.highlightElement(el);
+            // 코드 블록 스타일 조정
+            el.style.backgroundColor = '#1e1e1e';
+            el.style.color = '#ffffff';
+            el.style.padding = '12px';
+            el.style.fontSize = '14px';
+            el.style.lineHeight = '1.6';
+            el.style.border = '1px solid #333';
+            el.style.borderRadius = '6px';
+            el.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.3)';
             
-            // 세션 오류 처리
-            if (data.error === 'session_not_found' || data.error === 'search_error') {
-                chatBox.innerHTML += `<div class="alert alert-danger"><b>AI:</b> ${marked.parse(data.answer)}</div>`;
-                chatBox.scrollTop = chatBox.scrollHeight;
-                
-                // 3초 후 메인 페이지로 이동
-                setTimeout(() => {
-                    alert('세션이 만료되었거나 오류가 발생했습니다. 메인 페이지로 이동합니다.');
-                    window.location.href = '/';
-                }, 3000);
-                return;
+            // 코드 요소들의 색상을 더 선명하게 조정
+            const keywords = el.querySelectorAll('.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-tag');
+            const strings = el.querySelectorAll('.hljs-string, .hljs-regexp, .hljs-selector-attr');
+            const comments = el.querySelectorAll('.hljs-comment, .hljs-quote');
+            const functions = el.querySelectorAll('.hljs-function, .hljs-title, .hljs-section');
+            const numbers = el.querySelectorAll('.hljs-number, .hljs-literal');
+            const variables = el.querySelectorAll('.hljs-variable, .hljs-params, .hljs-class');
+            
+            keywords.forEach(elem => { elem.style.color = '#569CD6'; elem.style.fontWeight = 'bold'; });
+            strings.forEach(elem => { elem.style.color = '#CE9178'; });
+            comments.forEach(elem => { elem.style.color = '#6A9955'; elem.style.fontStyle = 'italic'; });
+            functions.forEach(elem => { elem.style.color = '#DCDCAA'; });
+            numbers.forEach(elem => { elem.style.color = '#B5CEA8'; });
+            variables.forEach(elem => { elem.style.color = '#9CDCFE'; });
+            if (!el.parentElement.querySelector('.copy-btn')) {
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn absolute top-2 right-4 bg-gray-700 text-white border border-gray-600 rounded px-2 py-1 text-xs hover:bg-gray-600';
+                btn.innerText = '복사';
+                btn.onclick = function() {
+                    navigator.clipboard.writeText(el.innerText);
+                    btn.innerText = '복사됨!';
+                    setTimeout(()=>{btn.innerText='복사';}, 1000);
+                };
+                el.parentElement.style.position = 'relative';
+                el.parentElement.appendChild(btn);
             }
-            
-            // 일반 응답 처리
-            if (data.answer) {
-                chatBox.innerHTML += `
-                  <div class="msg-ai"><div class="bubble"> <b>AI:</b> ${marked.parse(data.answer)} </div></div>`;
-                // 코드블록 하이라이팅 적용
-                document.querySelectorAll('#chat-box pre code').forEach((el) => {
-                    hljs.highlightElement(el);
-                    // 복사 버튼 추가
-                    if (!el.parentElement.querySelector('.copy-btn')) {
-                        const btn = document.createElement('button');
-                        btn.className = 'copy-btn';
-                        btn.innerText = '복사';
-                        btn.onclick = function() {
-                            navigator.clipboard.writeText(el.innerText);
-                            btn.innerText = '복사됨!';
-                            setTimeout(()=>{btn.innerText='복사';}, 1000);
-                        };
-                        el.parentElement.style.position = 'relative';
-                        el.parentElement.appendChild(btn);
-                    }
-                });
-            }
-            
-            // 코드 수정 처리
-            if (data.modified_code) {
-                lastFileName = data.file_name || '';
-                lastModifiedCode = data.modified_code || '';
-                
-                // GitHub 푸시 의도 감지 API 호출
-                const checkPushRes = await fetch('/check_push_intent', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        session_id: '{{ session_id }}',
-                        message: userMsg
-                    })
-                });
-                const pushData = await checkPushRes.json();
-                const hasPushIntent = pushData.has_push_intent;
-                const hasToken = pushData.token_exists;
-                
-                // 버튼 구성 결정
-                let actionButtons = '';
-                if (hasPushIntent) {
-                    if (hasToken) {
-                        actionButtons = `
-                            <div class="d-flex gap-2 mb-3">
-                                <button id='apply-btn' class='btn btn-outline-primary'>로컬에만 적용</button>
-                                <button id='push-btn' class='btn btn-success'>GitHub에 적용(push)</button>
-                            </div>
-                            <div id="confirmation-msg" class="alert alert-info" style="display:none;">
-                                <p><strong>GitHub 저장소에 변경사항을 적용하시겠습니까?</strong></p>
-                                <p>브랜치: <code>test</code> | 파일: <code>${lastFileName}</code></p>
-                                <div class="d-flex gap-2">
-                                    <button id="confirm-push" class="btn btn-success">적용</button>
-                                    <button id="cancel-push" class="btn btn-outline-secondary">취소</button>
-                                </div>
-                            </div>`;
-                    } else {
-                        actionButtons = `
-                            <div class="d-flex gap-2 mb-3">
-                                <button id='apply-btn' class='btn btn-success'>로컬에만 적용</button>
-                            </div>
-                            <div class="alert alert-warning">
-                                <strong>GitHub 반영 기능은 토큰 입력 시에만 가능합니다.</strong><br>
-                                시작 화면에서 GitHub Personal Access Token을 입력해주세요.
-                            </div>`;
-                    }
-                } else {
-                    actionButtons = `<button id='apply-btn' class='btn btn-success'>적용</button>`;
-                }
-                
-                codePreview.innerHTML = `
-                    <h5>수정된 코드 미리보기</h5>
-                    <div><b>파일명:</b> ${lastFileName}</div>
-                    <pre><code class="language-python">${lastModifiedCode}</code></pre>
-                    ${actionButtons}`;
-                
-                document.querySelectorAll('#code-preview pre code').forEach((el) => {
-                    hljs.highlightElement(el);
-                    // 복사 버튼 추가
-                    if (!el.parentElement.querySelector('.copy-btn')) {
-                        const btn = document.createElement('button');
-                        btn.className = 'copy-btn';
-                        btn.innerText = '복사';
-                        btn.onclick = function() {
-                            navigator.clipboard.writeText(el.innerText);
-                            btn.innerText = '복사됨!';
-                            setTimeout(()=>{btn.innerText='복사';}, 1000);
-                        };
-                        el.parentElement.style.position = 'relative';
-                        el.parentElement.appendChild(btn);
-                    }
-                });
-                
-                // 로컬에만 적용 버튼 이벤트
-                if (document.getElementById('apply-btn')) {
-                    document.getElementById('apply-btn').onclick = async function() {
-                        const applyRes = await fetch('/apply_changes', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({
-                                session_id: '{{ session_id }}',
-                                file_name: lastFileName,
-                                new_content: lastModifiedCode,
-                                push_to_github: false
-                            })
-                        });
-                        const applyData = await applyRes.json();
-                        
-                        if (applyData.error) {
-                            codePreview.innerHTML += `<div class='mt-2 alert alert-danger'>${applyData.error}</div>`;
-                        } else {
-                            codePreview.innerHTML += `<div class='mt-2 alert alert-success'>${applyData.result}</div>`;
-                        }
-                    };
-                }
-                
-                // GitHub 푸시 버튼 이벤트
-                if (document.getElementById('push-btn')) {
-                    document.getElementById('push-btn').onclick = function() {
-                        document.getElementById('confirmation-msg').style.display = 'block';
-                        this.style.display = 'none';
-                        if (document.getElementById('apply-btn')) {
-                            document.getElementById('apply-btn').style.display = 'none';
-                        }
-                    };
-                }
-                
-                // 확인 버튼 이벤트
-                if (document.getElementById('confirm-push')) {
-                    document.getElementById('confirm-push').onclick = async function() {
-                        const applyRes = await fetch('/apply_changes', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({
-                                session_id: '{{ session_id }}',
-                                file_name: lastFileName,
-                                new_content: lastModifiedCode,
-                                push_to_github: true,
-                                commit_msg: "AI 코드 자동 수정 및 GitHub 반영"
-                            })
-                        });
-                        const applyData = await applyRes.json();
-                        
-                        if (applyData.error) {
-                            codePreview.innerHTML += `<div class='mt-2 alert alert-danger'>${applyData.error}</div>`;
-                        } else {
-                            let resultClass = applyData.pushed_to_github ? 'success' : 'warning';
-                            codePreview.innerHTML += `<div class='mt-2 alert alert-${resultClass}'>${applyData.result}</div>`;
-                        }
-                    };
-                }
-                
-                // 취소 버튼 이벤트
-                if (document.getElementById('cancel-push')) {
-                    document.getElementById('cancel-push').onclick = function() {
-                        document.getElementById('confirmation-msg').style.display = 'none';
-                        if (document.getElementById('push-btn')) {
-                            document.getElementById('push-btn').style.display = 'inline-block';
-                        }
-                        if (document.getElementById('apply-btn')) {
-                            document.getElementById('apply-btn').style.display = 'inline-block';
-                        }
-                    };
-                }
+        });
+    }
+    // 코드 수정 처리
+    if (data.modified_code) {
+        // 로딩 애니메이션 제거
+        const loadingElement = document.getElementById(loadingId);
+        if (loadingElement) {
+            loadingElement.remove();
+        }
+        
+        // 채팅창 내에서 코드 미리보기 표시하도록 변경
+        codePreview.style.display = 'none';
+        
+        lastFileName = data.file_name || '';
+        lastModifiedCode = data.modified_code || '';
+        const checkPushRes = await fetch('/check_push_intent', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                session_id: '{{ session_id }}',
+                message: userMsg
+            })
+        });
+        const pushData = await checkPushRes.json();
+        const hasPushIntent = pushData.has_push_intent;
+        const hasToken = pushData.token_exists;
+        let actionButtons = '';
+        if (hasPushIntent) {
+            if (hasToken) {
+                actionButtons = `
+                    <div class="flex gap-2 mb-3">
+                        <button id='apply-btn' class='bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-md transition-colors duration-200'>로컬에만 적용</button>
+                        <button id='push-btn' class='bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md transition-colors duration-200'>GitHub에 적용(push)</button>
+                    </div>
+                    <div id="confirmation-msg" class="bg-blue-100 text-blue-900 rounded-lg p-4 my-2" style="display:none;">
+                        <p class="font-bold mb-2">GitHub 저장소에 변경사항을 적용하시겠습니까?</p>
+                        <p>브랜치: <code>test</code> | 파일: <code>${lastFileName}</code></p>
+                        <div class="flex gap-2 mt-2">
+                            <button id="confirm-push" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md transition-colors duration-200">적용</button>
+                            <button id="cancel-push" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition-colors duration-200">취소</button>
+                        </div>
+                    </div>`;
             } else {
-                codePreview.innerHTML = '';
+                actionButtons = `
+                    <div class="flex gap-2 mb-3">
+                        <button id='apply-btn' class='bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-md transition-colors duration-200'>로컬에만 적용</button>
+                    </div>
+                    <div class="bg-yellow-100 text-yellow-900 rounded-lg p-4 my-2">
+                        <strong>GitHub 반영 기능은 토큰 입력 시에만 가능합니다.</strong><br>
+                        시작 화면에서 GitHub Personal Access Token을 입력해주세요.
+                    </div>`;
             }
-            chatBox.scrollTop = chatBox.scrollHeight;
+        } else {
+            actionButtons = `
+                <div class="flex gap-2 mb-3">
+                    <button id='apply-btn' class='bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-md transition-colors duration-200'>적용</button>
+                </div>`;
         }
-    </script>
+        // 코드 미리보기 내용을 채팅창에 추가
+        chatBox.innerHTML += `
+          <div class="msg-ai flex justify-start mb-2">
+            <div class="bg-gray-600 text-white rounded-2xl rounded-bl-none px-5 py-3 max-w-[90%] font-medium shadow" style="overflow-wrap: break-word; word-break: break-word;">
+              <b class="text-blue-300">AI:</b> 아래와 같이 코드를 수정했습니다:
+              <div class="mb-2 mt-3 text-gray-300"><b>파일명:</b> ${lastFileName}</div>
+              <pre class="relative bg-gray-800 p-4 rounded-md overflow-auto max-h-96"><code class="language-python" style="white-space: pre-wrap; word-break: break-word;">${lastModifiedCode}</code></pre>
+              ${actionButtons}
+            </div>
+          </div>`;
+        document.querySelectorAll('#code-preview pre code').forEach((el) => {
+            hljs.highlightElement(el);
+            // 코드 블록 스타일 조정
+            el.style.backgroundColor = '#1e1e1e';
+            el.style.color = '#ffffff';
+            el.style.padding = '12px';
+            el.style.fontSize = '14px';
+            el.style.lineHeight = '1.6';
+            el.style.border = '1px solid #333';
+            el.style.borderRadius = '6px';
+            el.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.3)';
+            
+            // 코드 요소들의 색상을 더 선명하게 조정
+            const keywords = el.querySelectorAll('.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-tag');
+            const strings = el.querySelectorAll('.hljs-string, .hljs-regexp, .hljs-selector-attr');
+            const comments = el.querySelectorAll('.hljs-comment, .hljs-quote');
+            const functions = el.querySelectorAll('.hljs-function, .hljs-title, .hljs-section');
+            const numbers = el.querySelectorAll('.hljs-number, .hljs-literal');
+            const variables = el.querySelectorAll('.hljs-variable, .hljs-params, .hljs-class');
+            
+            keywords.forEach(elem => { elem.style.color = '#569CD6'; elem.style.fontWeight = 'bold'; });
+            strings.forEach(elem => { elem.style.color = '#CE9178'; });
+            comments.forEach(elem => { elem.style.color = '#6A9955'; elem.style.fontStyle = 'italic'; });
+            functions.forEach(elem => { elem.style.color = '#DCDCAA'; });
+            numbers.forEach(elem => { elem.style.color = '#B5CEA8'; });
+            variables.forEach(elem => { elem.style.color = '#9CDCFE'; });
+            if (!el.parentElement.querySelector('.copy-btn')) {
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn absolute top-2 right-4 bg-gray-700 text-white border border-gray-600 rounded px-2 py-1 text-xs hover:bg-gray-600';
+                btn.innerText = '복사';
+                btn.onclick = function() {
+                    navigator.clipboard.writeText(el.innerText);
+                    btn.innerText = '복사됨!';
+                    setTimeout(()=>{btn.innerText='복사';}, 1000);
+                };
+                el.parentElement.style.position = 'relative';
+                el.parentElement.appendChild(btn);
+            }
+        });
+        
+        // 버튼 이벤트 리스너 추가
+        chatBox.addEventListener('click', function(e) {
+            if (e.target && e.target.id === 'close-preview-btn') {
+                // 미리보기를 닫는 기능은 더 이상 필요하지 않지만, 버튼이 있을 경우 오류 방지
+                codePreview.style.display = 'none';
+            }
+        });
+        
+        // GitHub 푸시 버튼 기능 구현
+        // GitHub 푸시 버튼 기능 구현 - 이벤트 위임 사용하여 동적 생성된 버튼에 이벤트 적용
+        chatBox.addEventListener('click', function(e) {
+            // 푸시 버튼 클릭 처리
+            if (e.target && e.target.id === 'push-btn') {
+                const confirmMsg = document.getElementById('confirmation-msg');
+                if (confirmMsg) confirmMsg.style.display = 'block';
+            }
+            
+            // 확인 버튼 처리 - 이벤트 위임 사용
+            // 확인 버튼 클릭 처리
+            if (e.target && e.target.id === 'confirm-push') {
+                // 추가 로딩 애니메이션 제거 (로딩 ID가 없을 수 있어서 모든 로딩 애니메이션 제거)
+                document.querySelectorAll('[id^="loading-"]').forEach(el => el.remove());
+                
+                (async function() {
+                    try {
+                        const pushBtn = document.getElementById('push-btn');
+                        if (pushBtn) {
+                            pushBtn.disabled = true;
+                            pushBtn.innerText = '처리 중...';
+                        }
+                        
+                        const pushRes = await fetch('/push_to_github', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                session_id: '{{ session_id }}',
+                                file_name: lastFileName,
+                                modified_code: lastModifiedCode
+                            })
+                        });
+                        
+                        const result = await pushRes.json();
+                        
+                        if (result.success) {
+                            chatBox.innerHTML += `
+                              <div class="msg-system flex justify-center my-3">
+                                <div class="bg-green-100 text-green-800 rounded-lg px-4 py-2 text-sm font-medium">
+                                  <i class="material-icons align-middle text-sm mr-1">check_circle</i>
+                                  GitHub에 성공적으로 코드가 적용되었습니다.
+                                </div>
+                              </div>`;
+                        } else {
+                            chatBox.innerHTML += `
+                              <div class="msg-system flex justify-center my-3">
+                                <div class="bg-red-100 text-red-800 rounded-lg px-4 py-2 text-sm font-medium">
+                                  <i class="material-icons align-middle text-sm mr-1">error</i>
+                                  GitHub 적용 실패: ${result.error || '알 수 없는 오류'}
+                                </div>
+                              </div>`;
+                        }
+                    } catch (error) {
+                        console.error('GitHub 푸시 오류:', error);
+                        chatBox.innerHTML += `
+                          <div class="msg-system flex justify-center my-3">
+                            <div class="bg-red-100 text-red-800 rounded-lg px-4 py-2 text-sm font-medium">
+                              <i class="material-icons align-middle text-sm mr-1">error</i>
+                              GitHub 적용 중 오류가 발생했습니다.
+                            </div>
+                          </div>`;
+                    } finally {
+                        const confirmMsg = document.getElementById('confirmation-msg');
+                        if (confirmMsg) confirmMsg.style.display = 'none';
+                        
+                        const pushBtn = document.getElementById('push-btn');
+                        if (pushBtn) {
+                            pushBtn.disabled = false;
+                            pushBtn.innerText = 'GitHub에 적용(push)';
+                        }
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                    }
+                })();
+            }
+            
+            // 취소 버튼 처리
+            if (e.target && e.target.id === 'cancel-push') {
+                const confirmMsg = document.getElementById('confirmation-msg');
+                if (confirmMsg) confirmMsg.style.display = 'none';
+            }
+        });
+        
+        // 로컬 적용 버튼 기능 구현 - 이벤트 위임 사용
+        chatBox.addEventListener('click', async function(e) {
+            // 로컬 적용 버튼 클릭 처리
+            if (e.target && e.target.id === 'apply-btn') {
+                // 추가 로딩 애니메이션 제거 (로딩 ID가 없을 수 있어서 모든 로딩 애니메이션 제거)
+                document.querySelectorAll('[id^="loading-"]').forEach(el => el.remove());
+                try {
+                    const applyBtn = document.getElementById('apply-btn');
+                    if (applyBtn) {
+                        applyBtn.disabled = true;
+                        applyBtn.innerText = '적용 중...';
+                    }
+                    
+                    const applyRes = await fetch('/apply_local', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            session_id: '{{ session_id }}',
+                            file_name: lastFileName,
+                            modified_code: lastModifiedCode
+                        })
+                    });
+                    
+                    const result = await applyRes.json();
+                    
+                    if (result.success) {
+                        chatBox.innerHTML += `
+                          <div class="msg-system flex justify-center my-3">
+                            <div class="bg-green-100 text-green-800 rounded-lg px-4 py-2 text-sm font-medium">
+                              <i class="material-icons align-middle text-sm mr-1">check_circle</i>
+                              로컬에 성공적으로 코드가 적용되었습니다.
+                            </div>
+                          </div>`;
+                    } else {
+                        chatBox.innerHTML += `
+                          <div class="msg-system flex justify-center my-3">
+                            <div class="bg-red-100 text-red-800 rounded-lg px-4 py-2 text-sm font-medium">
+                              <i class="material-icons align-middle text-sm mr-1">error</i>
+                              로컬 적용 실패: ${result.error || '알 수 없는 오류'}
+                            </div>
+                          </div>`;
+                    }
+                } catch (error) {
+                    console.error('로컬 적용 오류:', error);
+                    chatBox.innerHTML += `
+                      <div class="msg-system flex justify-center my-3">
+                        <div class="bg-red-100 text-red-800 rounded-lg px-4 py-2 text-sm font-medium">
+                          <i class="material-icons align-middle text-sm mr-1">error</i>
+                          로컬 적용 중 오류가 발생했습니다.
+                        </div>
+                      </div>`;
+                } finally {
+                    const applyBtn = document.getElementById('apply-btn');
+                    if (applyBtn) {
+                        applyBtn.disabled = false;
+                        applyBtn.innerText = '로컬에만 적용';
+                    }
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            }
+        });
+        }
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+</script>
+  </div>
+</div>
+</div>
 </body>
-</html> 
+</html>
