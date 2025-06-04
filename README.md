@@ -20,6 +20,7 @@
 
 
 ## 📅 프로젝트 과정
+
 ### 1단계 | GitHub 저장소 분석
 
 - Flask라는 웹 서버가 @app.route('/analyze')를 통해 요청 받음
