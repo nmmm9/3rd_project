@@ -4,21 +4,21 @@
 
 ## 👨‍👩‍👧‍👦 팀 | 떡잎마을
 <table>
-  <tr>
+  <tr> 
     <td align="center">
-      <img src="img/유리.PNG" width="100" />
+      <img src="teammate_img/유리.PNG" width="100" />
     </td>
     <td align="center">
-      <img src="img/스노우맨.PNG" width="100" />
+      <img src="teammate_img/스노우맨.PNG" width="100" />
     </td>
     <td align="center">
-      <img src="img/유치원 원장님.PNG" width="100" />
+      <img src="teammate_img/유치원 원장님.PNG" width="100" />
     </td>
     <td align="center">
-      <img src="img/짱구.PNG" width="100" />
+      <img src="teammate_img/짱구.PNG" width="100" />
     </td>
     <td align="center">
-      <img src="img/봉미선.PNG" width="100" />
+      <img src="teammate_img/봉미선.PNG" width="100" />
     </td>
   </tr>
   <tr>
