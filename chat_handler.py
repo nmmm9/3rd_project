@@ -5,9 +5,24 @@ import chromadb
 from github_analyzer import chroma_client
 from git_modifier import create_branch_and_commit
 import re
+import tiktoken
 from chat_memory import save_conversation, get_relevant_conversations
 
-# top-k 유사 청크 개수
+
+# OpenAI 임베딩 함수 정의
+def openai_ef(text):
+    try:
+        response = openai.embeddings.create(
+            input=text,
+            model="text-embedding-3-small"
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        print(f"[ERROR] 임베딩 생성 실패: {e}")
+        return None
+
+# OpenAI 토큰 계산용 tokenizer 초기화
+enc = tiktoken.get_encoding("cl100k_base")# top-k 유사 청크 개수
 TOP_K = 5
 
 # 더 구체적이고 엄격한 시스템 프롬프트
@@ -110,7 +125,12 @@ def handle_chat(session_id, message):
     
     print(f"[DEBUG] 세션 데이터 키: {list(session_data.keys())}")
     
-    # 1. 질문 임베딩 생성
+    # 1. 이전 대화 기록 가져오기
+    print(f"[DEBUG] 이전 대화 기록 검색 시작")
+    conversation_history = get_relevant_conversations(session_id, message)
+    print(f"[DEBUG] 이전 대화 기록: {conversation_history[:200]}...")
+    
+    # 2. 질문 임베딩 생성
     print(f"[DEBUG] 질문 임베딩 생성 시작: '{message[:50]}...'")
     try:
         # OpenAI API 키 확인
@@ -149,7 +169,7 @@ def handle_chat(session_id, message):
             'error': "embedding_error"
         }
 
-    # 2. ChromaDB에서 유사 코드 청크 검색
+    # 3. ChromaDB에서 유사 코드 청크 검색
     try:
         # ChromaDB 클라이언트 상태 확인
         if not chroma_client:
@@ -231,237 +251,71 @@ def handle_chat(session_id, message):
                 'error': "query_error"
             }
         
-        # 1. 질문 의도 태깅 (LLM)
-        try:
-            tag_prompt = f"아래 질문의 의도(원하는 코드 역할/기능)를 한글로 간단히 요약해줘.\n\n질문:\n{message}"
-            tag_resp = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": tag_prompt}],
-                temperature=0.0,
-                max_tokens=32
-            )
-            question_role_tag = tag_resp.choices[0].message.content.strip()
-            print(f"[DEBUG] 질문 의도 태그: {question_role_tag}")
-        except Exception as e:
-            print(f"[WARNING] 질문 의도 태깅 실패: {e}")
-            question_role_tag = ''
-        # 2. role_tag 매칭 청크 우선 포함
-        context_chunks = []
-        if 'documents' in results and 'metadatas' in results and results['documents'][0] and results['metadatas'][0]:
-            for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
-                role_tag = meta.get('role_tag', '')
-                if question_role_tag and role_tag and (question_role_tag in role_tag or role_tag in question_role_tag):
-                    meta_info = []
-                    if meta.get('file_name'): meta_info.append(f"파일명: {meta['file_name']}")
-                    if meta.get('function_name'): meta_info.append(f"함수: {meta['function_name']}")
-                    if meta.get('class_name'): meta_info.append(f"클래스: {meta['class_name']}")
-                    if meta.get('start_line') and meta.get('end_line'):
-                        meta_info.append(f"라인: {meta['start_line']}~{meta['end_line']}")
-                    if meta.get('sha'): meta_info.append(f"sha: {meta['sha']}")
-                    meta_info.append(f"역할: {role_tag}")
-                    context_chunks.append(f"[{'/'.join(meta_info)}]\n{doc}")
-        # 3. 매칭된 청크가 부족하면 기존 방식으로 보충
-        if len(context_chunks) < 3:
-            for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
-                role_tag = meta.get('role_tag', '')
-                meta_info = []
-                if meta.get('file_name'): meta_info.append(f"파일명: {meta['file_name']}")
-                if meta.get('function_name'): meta_info.append(f"함수: {meta['function_name']}")
-                if meta.get('class_name'): meta_info.append(f"클래스: {meta['class_name']}")
-                if meta.get('start_line') and meta.get('end_line'):
-                    meta_info.append(f"라인: {meta['start_line']}~{meta['end_line']}")
-                if meta.get('sha'): meta_info.append(f"sha: {meta['sha']}")
-                if role_tag: meta_info.append(f"역할: {role_tag}")
-                chunk_str = f"[{'/'.join(meta_info)}]\n{doc}"
-                if chunk_str not in context_chunks:
-                    context_chunks.append(chunk_str)
-                if len(context_chunks) >= 5:
-                    break
-        # 4. 프롬프트에 컨텍스트 범위 안내
-        context = '\n\n'.join(context_chunks)
-        context = f"아래는 [파일/함수/클래스/라인/역할] 단위로 추출된 컨텍스트입니다.\n{context}"
-        print(f"[DEBUG] 유사 코드 청크 {len(context_chunks)}개 찾음 (총 {len(context)} 문자)")
-        
-        # 검색된 파일 경로 로깅
-        if 'metadatas' in results and results['metadatas'] and results['metadatas'][0]:
-            paths = [meta.get('path', 'unknown') for meta in results['metadatas'][0]]
-            print(f"[DEBUG] 검색된 파일 경로: {paths}")
-            # 유사도 점수 로깅 (있는 경우)
-            if 'distances' in results and results['distances'] and results['distances'][0]:
-                distances = results['distances'][0]
-                print(f"[DEBUG] 검색 유사도 점수: {distances}")
-                # 파일 경로와 유사도 점수 매핑
-                path_scores = list(zip(paths, distances))
-                print(f"[DEBUG] 파일별 유사도 점수: {path_scores}")
+        # 검색 결과 처리
+        if not results or 'documents' not in results or not results['documents'] or not results['documents'][0]:
+            print("[WARNING] 검색 결과가 비어 있습니다.")
+            context = "관련 코드를 찾을 수 없습니다."
         else:
-            print("[WARNING] 검색 결과에 메타데이터가 없습니다.")
-
+            # 검색된 코드 청크들을 하나의 문자열로 결합
+            context = "\n\n".join(results['documents'][0])
+            print(f"[DEBUG] 검색된 코드 청크 수: {len(results['documents'][0])}")
+        
+        # 4. LLM에 질문 전달
+        try:
+            # 프롬프트 생성
+            prompt = PROMPT_TEMPLATE.format(
+                directory_structure=session_data.get('directory_structure', '디렉토리 구조 정보 없음'),
+                conversation_history=conversation_history,
+                context=context,
+                question=message
+            )
+            
+            # 토큰 수 계산
+            prompt_tokens = len(enc.encode(prompt))
+            print(f"[DEBUG] 프롬프트 토큰 수: {prompt_tokens}")
+            
+            # LLM 호출
+            print("[DEBUG] LLM 호출 시작")
+            response = openai.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT_QA},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            # 응답 처리
+            answer = response.choices[0].message.content
+            print(f"[DEBUG] LLM 응답 생성 완료 (길이: {len(answer)})")
+            
+            # 5. 대화 저장
+            print("[DEBUG] 대화 저장 시작")
+            save_conversation(session_id, message, answer)
+            print("[DEBUG] 대화 저장 완료")
+            
+            return {
+                'answer': answer,
+                'conversation_history': conversation_history
+            }
+            
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] LLM 호출 실패: {e}")
+            traceback.print_exc()
+            return {
+                'answer': f"답변 생성 중 오류가 발생했습니다: {str(e)}",
+                'error': "llm_error"
+            }
+            
     except Exception as e:
-        print(f"[ERROR] 코드 청크 검색 오류: {e}")
+        import traceback
+        print(f"[ERROR] 코드 검색 중 오류 발생: {e}")
+        traceback.print_exc()
         return {
             'answer': f"코드 검색 중 오류가 발생했습니다: {str(e)}",
             'error': "search_error"
-        }
-    
-    # 디렉토리 구조 확인
-    directory_structure = session_data.get('directory_structure')
-    
-    if directory_structure:
-        print(f"[DEBUG] 디렉토리 구조 정보 제공 (길이: {len(directory_structure)} 문자)")
-    else:
-        print("[DEBUG] 디렉토리 구조 정보가 없습니다.")
-        directory_structure = "프로젝트 구조 정보가 없습니다. 파일 내용만 참고하여 응답하겠습니다."
-
-    # 파일 전체 코드 요구 패턴 감지
-    file_full_keywords = ["전체", "전체 코드", "전체내용", "전체 보여", "전체 출력"]
-    is_full_file_request = any(kw in message for kw in file_full_keywords)
-    scope = extract_scope_from_question(message)
-    full_file_contexts = []
-    if is_full_file_request and scope['file']:
-        for fname in scope['file']:
-            # 세션 데이터에서 파일 경로 찾기
-            file_path = None
-            for f in session_data.get('files', []):
-                if f.get('file_name') and fname in f['file_name']:
-                    file_path = f['path']
-                    break
-            if file_path:
-                try:
-                    with open(f"{repo_path}/{file_path}", 'r', encoding='utf-8') as f:
-                        code = f.read()
-                    full_file_contexts.append(f"// FILE: {file_path}\n{code}")
-                except Exception as e:
-                    print(f"[WARNING] 파일 전체 코드 로드 실패: {file_path}, {e}")
-
-    # 청크 검색 결과와 파일 전체 내용 합치기
-    if full_file_contexts:
-        context = '\n\n'.join(full_file_contexts)
-    else:
-        # 기존 방식
-        context = '\n\n'.join(context_chunks)
-    context = f"아래는 [파일/함수/클래스/라인/역할] 단위로 추출된 컨텍스트입니다.\n{context}"
-    
-    # 검색된 파일 경로 로깅
-    if 'metadatas' in results and results['metadatas'] and results['metadatas'][0]:
-        paths = [meta.get('path', 'unknown') for meta in results['metadatas'][0]]
-        print(f"[DEBUG] 검색된 파일 경로: {paths}")
-        # 유사도 점수 로깅 (있는 경우)
-        if 'distances' in results and results['distances'] and results['distances'][0]:
-            distances = results['distances'][0]
-            print(f"[DEBUG] 검색 유사도 점수: {distances}")
-            # 파일 경로와 유사도 점수 매핑
-            path_scores = list(zip(paths, distances))
-            print(f"[DEBUG] 파일별 유사도 점수: {path_scores}")
-    else:
-        print("[WARNING] 검색 결과에 메타데이터가 없습니다.")
-
-    # 3. LLM에 컨텍스트와 함께 전달하여 답변 생성
-    try:
-        # 이전 대화 기록 가져오기
-        print(f"[CHAT_HANDLER] 이전 대화 기록 가져오기 시작 - 세션: {session_id}")
-        conversation_history = get_relevant_conversations(session_id, message)
-        
-        # 대화 기록 결과 로그
-        if conversation_history == '이전 대화 없음':
-            print(f"[CHAT_HANDLER] 관련 대화 기록이 없습니다.")
-        else:
-            newline = "\n"
-            history_lines = conversation_history.strip().split(newline)
-            conversation_count = sum(1 for line in history_lines if line.startswith('[관련 대화'))
-            print(f"[CHAT_HANDLER] 가져온 관련 대화 수: {conversation_count}개, 전체 길이: {len(conversation_history)} 문자")
-            
-            # 각 대화 삼합수 출력 (디버깅용)
-            current_conversation = ""
-            for line in history_lines:
-                if line.startswith('[관련 대화'):
-                    if current_conversation:
-                        print(f"[CHAT_HANDLER] 대화 삼합수: {hash(current_conversation) % 1000}")
-                    current_conversation = line
-                else:
-                    current_conversation += newline + line
-            
-            if current_conversation:
-                print(f"[CHAT_HANDLER] 대화 삼합수: {hash(current_conversation) % 1000}")
-        
-        
-        # 프롬프트 생성 (대화 기록 포함)
-        prompt = PROMPT_TEMPLATE.format(
-            context=context, 
-            question=message,
-            directory_structure=directory_structure,
-            conversation_history=conversation_history
-        )
-        print("\n[LLM 프롬프트]\n" + prompt + "\n")  # 프롬프트 확인용 출력
-        print(f"[DEBUG] 프롬프트 길이: {len(prompt)} 문자")
-        
-        # 프롬프트 길이 제한 확인
-        if len(prompt) > 100000:  # OpenAI API의 토큰 제한을 고려한 값
-            print(f"[WARNING] 프롬프트가 너무 깁니다. 컨텍스트 일부를 잘라냅니다.")
-            # 컨텍스트 길이 제한
-            max_context_length = 80000  # 적절한 길이로 조정
-            truncated_context = context[:max_context_length] + "\n... (컨텍스트 길이 제한으로 인해 일부 내용이 생략되었습니다) ..."
-            prompt = PROMPT_TEMPLATE.format(
-                context=truncated_context, 
-                question=message,
-                directory_structure=directory_structure
-            )
-            print(f"[DEBUG] 수정된 프롬프트 길이: {len(prompt)} 문자")
-        
-        # LLM 호출
-        print(f"[DEBUG] OpenAI API 호출 시작 (model=gpt-4o, temperature=0.2)")
-        response = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT_QA},
-                      {"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=2048
-        )
-        
-        # 응답 처리
-        if not response or not response.choices or not response.choices[0].message:
-            print(f"[ERROR] LLM 응답이 비어 있습니다: {response}")
-            return {
-                'answer': "응답 생성 중 오류가 발생했습니다. 다시 시도해주세요.",
-                'error': "empty_response"
-            }
-        
-        answer = response.choices[0].message.content.strip()
-        print(f"[DEBUG] LLM 응답 성공 (길이: {len(answer)} 문자)")
-        
-        # 대화 기록 저장
-        try:
-            print(f"[CHAT_HANDLER] 대화 기록 저장 시작 - 세션: {session_id}")
-            print(f"[CHAT_HANDLER] 질문: {message[:100]}{'...' if len(message) > 100 else ''}")
-            print(f"[CHAT_HANDLER] 답변: {answer[:100]}{'...' if len(answer) > 100 else ''}")
-            
-            # 질문-답변 삼합수 계산 (디버깅용)
-            qa_hash = hash(message + answer) % 10000
-            print(f"[CHAT_HANDLER] 저장할 QA 삼합수: {qa_hash}")
-            
-            save_conversation(session_id, message, answer)
-            print(f"[CHAT_HANDLER] 대화 기록 저장 성공: session_id={session_id}")
-        except Exception as e:
-            import traceback
-            print(f"[CHAT_HANDLER] 대화 기록 저장 실패: {str(e)}")
-            traceback.print_exc()
-        
-        # 응답이 비어있는지 확인
-        if not answer:
-            print("[WARNING] LLM이 비어있는 응답을 리턴했습니다.")
-            return {
-                'answer': "질문에 대한 답변을 생성하지 못했습니다. 다른 질문을 시도해주세요.",
-                'error': "empty_answer"
-            }
-        
-        # 성공적인 응답 반환
-        return {'answer': answer}
-    except Exception as e:
-        import traceback
-        print(f"[ERROR] LLM 호출 오류: {e}")
-        traceback.print_exc()
-        return {
-            'answer': f"응답 생성 중 오류가 발생했습니다: {str(e)}",
-            'error': "llm_error"
         }
 
 def handle_modify_request(session_id, message):
@@ -818,133 +672,90 @@ def handle_modify_request(session_id, message):
         print("[DEBUG] 디렉토리 구조 정보가 없습니다.")
         directory_structure = "프로젝트 구조 정보가 없습니다. 파일 내용만 참고하여 응답하겠습니다."
     
-    # 프롬프트 생성 및 LLM 호출
+    # 이전 대화 기록 가져오기
+    print(f"[CHAT_HANDLER] 이전 대화 기록 가져오기 시작 - 세션: {session_id}")
+    conversation_history = get_relevant_conversations(session_id, message)
+    
+    # 대화 기록 결과 로그
+    if conversation_history == '이전 대화 없음':
+        print(f"[CHAT_HANDLER] 관련 대화 기록이 없습니다.")
+    else:
+        newline = "\n"
+        history_lines = conversation_history.strip().split(newline)
+        conversation_count = sum(1 for line in history_lines if line.startswith('[관련 대화'))
+        print(f"[CHAT_HANDLER] 가져온 관련 대화 수: {conversation_count}개, 전체 길이: {len(conversation_history)} 문자")
+
+    # 프롬프트 생성 (대화 기록 포함)
+    prompt = PROMPT_TEMPLATE.format(
+        context=context, 
+        question=message,
+        directory_structure=directory_structure,
+        conversation_history=conversation_history
+    )
+    print("\n[LLM 프롬프트]\n" + prompt + "\n")  # 프롬프트 확인용 출력
+    print(f"[DEBUG] 프롬프트 길이: {len(prompt)} 문자")
+    
+    # 프롬프트 길이 제한 확인
+    if len(prompt) > 100000:  # OpenAI API의 토큰 제한을 고려한 값
+        print(f"[WARNING] 프롬프트가 너무 깁니다. 컨텍스트 일부를 잘라냅니다.")
+        # 컨텍스트 길이 제한
+        max_context_length = 80000  # 적절한 길이로 조정
+        truncated_context = context[:max_context_length] + "\n... (컨텍스트 길이 제한으로 인해 일부 내용이 생략되었습니다) ..."
+        prompt = PROMPT_TEMPLATE.format(
+            context=truncated_context, 
+            question=message,
+            directory_structure=directory_structure
+        )
+        print(f"[DEBUG] 수정된 프롬프트 길이: {len(prompt)} 문자")
+    
+    # LLM 호출
+    print(f"[DEBUG] OpenAI API 호출 시작 (model=gpt-4o, temperature=0.2)")
+    response = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "system", "content": SYSTEM_PROMPT_QA},
+                  {"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=2048
+    )
+    
+    # 응답 처리
+    if not response or not response.choices or not response.choices[0].message:
+        print(f"[ERROR] LLM 응답이 비어 있습니다: {response}")
+        return {
+            'answer': "응답 생성 중 오류가 발생했습니다. 다시 시도해주세요.",
+            'error': "empty_response"
+        }
+    
+    answer = response.choices[0].message.content.strip()
+    print(f"[DEBUG] LLM 응답 성공 (길이: {len(answer)} 문자)")
+    
+    # 대화 기록 저장
     try:
-        # 이전 대화 기록 가져오기
-        conversation_history = get_relevant_conversations(session_id, message)
-        print(f"[DEBUG] 코드 수정 관련 대화 기록 조회 결과: {len(conversation_history) if conversation_history != '이전 대화 없음' else 0} 문자")
+        print(f"[CHAT_HANDLER] 대화 기록 저장 시작 - 세션: {session_id}")
+        print(f"[CHAT_HANDLER] 질문: {message[:100]}{'...' if len(message) > 100 else ''}")
+        print(f"[CHAT_HANDLER] 답변: {answer[:100]}{'...' if len(answer) > 100 else ''}")
         
-        # 프롬프트 생성 (대화 기록 포함)
-        prompt = MODIFY_PROMPT_TEMPLATE.format(
-            context=context, 
-            request=message,
-            directory_structure=directory_structure,
-            conversation_history=conversation_history
-        )
-        print("\n[LLM 프롬프트 - 코드수정]\n" + prompt + "\n")  # 프롬프트 확인용 출력
-        print(f"[DEBUG] 코드수정 프롬프트 길이: {len(prompt)} 문자")
+        # 질문-답변 삼합수 계산 (디버깅용)
+        qa_hash = hash(message + answer) % 10000
+        print(f"[CHAT_HANDLER] 저장할 QA 삼합수: {qa_hash}")
         
-        # 프롬프트 길이 제한 확인
-        if len(prompt) > 100000:  # OpenAI API의 토큰 제한을 고려한 값
-            print(f"[WARNING] 코드수정 프롬프트가 너무 깁니다. 컨텍스트 일부를 잘라냅니다.")
-            # 컨텍스트 길이 제한
-            max_context_length = 80000  # 적절한 길이로 조정
-            truncated_context = context[:max_context_length] + "\n... (컨텍스트 길이 제한으로 인해 일부 내용이 생략되었습니다) ...\n\n=== 이전 대화 기록 ===\n\n" + conversation_history
-            prompt = MODIFY_PROMPT_TEMPLATE.format(
-                context=truncated_context, 
-                request=message,
-                directory_structure=directory_structure,
-                conversation_history=""
-            )
-            print(f"[DEBUG] 수정된 코드수정 프롬프트 길이: {len(prompt)} 문자")
-        
-        # LLM 호출
-        print(f"[DEBUG] 코드수정용 OpenAI API 호출 시작 (model=gpt-4o, temperature=0.2, max_tokens=4096)")
-        response = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT_MODIFY},
-                      {"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=4096
-        )
-        
-        # 응답 처리
-        if not response or not response.choices or not response.choices[0].message:
-            print(f"[ERROR] 코드수정 LLM 응답이 비어 있습니다: {response}")
-            return {
-                'answer': "코드 수정 중 오류가 발생했습니다. 다시 시도해주세요.",
-                'error': "empty_response",
-                'modified_code': "",
-                'file_name': "",
-                'has_push_intent': has_push_intent,
-                'token_exists': token_exists,
-                'requires_confirmation': requires_confirmation,
-                'push_intent_message': push_intent_message
-            }
-        
-        llm_code = response.choices[0].message.content.strip()
-        print(f"[DEBUG] 코드수정 LLM 응답 성공 (길이: {len(llm_code)} 문자)")
-        
-        # 대화 기록 저장
-        try:
-            print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 시작 - 세션: {session_id}")
-            summary_answer = f"코드 수정 요청: {message}\n\n수정 작업 완료"
-            print(f"[CHAT_HANDLER] 질문: {message[:100]}{'...' if len(message) > 100 else ''}")
-            print(f"[CHAT_HANDLER] 요약 답변: {summary_answer[:100]}{'...' if len(summary_answer) > 100 else ''}")
-            
-            # 질문-답변 삼합수 계산 (디버깅용)
-            qa_hash = hash(message + summary_answer) % 10000
-            print(f"[CHAT_HANDLER] 저장할 코드 수정 QA 삼합수: {qa_hash}")
-            
-            save_conversation(session_id, message, summary_answer)
-            print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 성공: session_id={session_id}")
-        except Exception as e:
-            import traceback
-            print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 실패: {str(e)}")
-            traceback.print_exc()
-        
-        # 응답이 비어있는지 확인
-        if not llm_code:
-            print("[WARNING] 코드수정 LLM이 비어있는 응답을 리턴했습니다.")
-            return {
-                'answer': "코드 수정을 생성하지 못했습니다. 다른 수정 요청을 시도해주세요.",
-                'error': "empty_code",
-                'modified_code': "",
-                'file_name': "",
-                'has_push_intent': has_push_intent,
-                'token_exists': token_exists,
-                'requires_confirmation': requires_confirmation,
-                'push_intent_message': push_intent_message
-            }
-        
-        # 파일명과 코드 분리
-        file_name, code = parse_llm_code_response(llm_code)
-        print(f"[DEBUG] 파싱된 파일명: '{file_name or '(none)'}', 코드 길이: {len(code)} 문자")
-        
-        # 코드가 비어있는지 확인
-        if not code:
-            print("[WARNING] 파싱된 코드가 비어 있습니다.")
-            return {
-                'answer': "코드 수정을 생성하지 못했습니다. 다른 수정 요청을 시도해주세요.",
-                'error': "empty_parsed_code",
-                'modified_code': "",
-                'file_name': "",
-                'has_push_intent': has_push_intent,
-                'token_exists': token_exists,
-                'requires_confirmation': requires_confirmation,
-                'push_intent_message': push_intent_message
-            }
-        
-        # 성공적인 응답 반환
-        return {'modified_code': code, 'file_name': file_name or '',
-                'has_push_intent': has_push_intent,
-                'token_exists': token_exists,
-                'requires_confirmation': requires_confirmation,
-                'push_intent_message': push_intent_message}
+        save_conversation(session_id, message, answer)
+        print(f"[CHAT_HANDLER] 대화 기록 저장 성공: session_id={session_id}")
     except Exception as e:
         import traceback
-        print(f"[ERROR] 코드수정 LLM 호출 오류: {e}")
+        print(f"[CHAT_HANDLER] 대화 기록 저장 실패: {str(e)}")
         traceback.print_exc()
+    
+    # 응답이 비어있는지 확인
+    if not answer:
+        print("[WARNING] LLM이 비어있는 응답을 리턴했습니다.")
         return {
-            'answer': f"코드 수정 중 오류가 발생했습니다: {str(e)}",
-            'error': "llm_error",
-            'modified_code': "",
-            'file_name': "",
-            'has_push_intent': has_push_intent,
-            'token_exists': token_exists,
-            'requires_confirmation': requires_confirmation,
-            'push_intent_message': push_intent_message
+            'answer': "질문에 대한 답변을 생성하지 못했습니다. 다른 질문을 시도해주세요.",
+            'error': "empty_answer"
         }
+    
+    # 성공적인 응답 반환
+    return {'answer': answer}
 
 def detect_github_push_intent(message):
     """사용자 메시지에서 GitHub 푸시 의도를 감지 (정규식 + LLM 보조)"""
@@ -1104,4 +915,4 @@ def extract_scope_from_question(question: str):
         'function': func_match,
         'class': class_match,
         'directory': dir_match
-    } 
+    }
