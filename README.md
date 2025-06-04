@@ -102,6 +102,7 @@
 - Git에 커밋하거나, 원하면 GitHub에 푸시까지 가능
 
 ## 💻 구현 화면
+<img src="teammate_img/챗봇 첫페이지.PNG" width="900" />
 <img src="teammate_img/구현화면1.PNG" width="900" />
 <img src="teammate_img/구현화면2.PNG" width="900" />
 
