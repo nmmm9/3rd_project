@@ -552,45 +552,436 @@ class RepositoryEmbedder:
             def chunk_python_functions(source_code):
                 try:
                     tree = ast.parse(source_code)
-                except Exception:
-                    return [(source_code, 0, len(enc.encode(source_code)), None, None, 1, len(source_code.splitlines()))]
+                except Exception as e:
+                    print(f"[WARNING] AST 파싱 실패: {e}")
+                    return [(source_code, 0, len(enc.encode(source_code)), None, None, 1, len(source_code.splitlines()), None, 0, None)]
+                
                 lines = source_code.splitlines()
                 chunks = []
+                imports = []
+                parent_map = {}  # 부모-자식 관계 추적
+                
+                # 부모-자식 관계 맵 구축
+                for node in ast.walk(tree):
+                    for child in ast.iter_child_nodes(node):
+                        parent_map[child] = node
+                
+                # 임포트 문 수집
                 for node in tree.body:
-                    if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                    if isinstance(node, (ast.Import, ast.ImportFrom)):
                         start = node.lineno - 1
-                        end = getattr(node, 'end_lineno', None)
-                        if end is None:
-                            continue
+                        end = getattr(node, 'end_lineno', start + 1)
+                        import_text = '\n'.join(lines[start:end])
+                        imports.append(import_text)
+                
+                # 전체 임포트 문자열
+                imports_text = '\n'.join(imports)
+                
+                # 복잡도 계산 함수
+                def calculate_complexity(node):
+                    """AST 노드의 복잡도 계산"""
+                    if isinstance(node, ast.FunctionDef):
+                        # 기본 복잡도 + 파라미터 수 + 내부 조건문/반복문 수
+                        complexity = 1 + len(node.args.args)
+                        for n in ast.walk(node):
+                            if isinstance(n, (ast.If, ast.For, ast.While, ast.Try)):
+                                complexity += 1
+                        return complexity
+                    elif isinstance(node, ast.ClassDef):
+                        # 기본 복잡도 + 상속 수 + 메소드 수
+                        complexity = 1 + len(node.bases)
+                        for n in node.body:
+                            if isinstance(n, ast.FunctionDef):
+                                complexity += 1
+                        return complexity
+                    return 1
+                
+                # 계층적 청킹 함수
+                def process_node(node, parent_class=None, parent_func=None, depth=0):
+                    """노드를 재귀적으로 처리하여 청크 생성"""
+                    if not hasattr(node, 'lineno'):
+                        return
+                    
+                    start = node.lineno - 1
+                    end = getattr(node, 'end_lineno', None)
+                    if end is None:
+                        return
+                    
+                    # 노드 유형에 따른 처리
+                    if isinstance(node, ast.ClassDef):
+                        class_name = node.name
+                        func_name = None
+                        
+                        # 클래스 docstring 추출
+                        docstring = ast.get_docstring(node)
+                        
+                        # 클래스 전체 코드
                         chunk = '\n'.join(lines[start:end])
-                        name = node.name
-                        class_name = node.name if isinstance(node, ast.ClassDef) else None
-                        func_name = node.name if isinstance(node, ast.FunctionDef) else None
-                        if len(enc.encode(chunk)) > 256:
-                            for sub_chunk, t_start, t_end in split_by_tokens(chunk, max_tokens=256, overlap=64):
-                                chunks.append((sub_chunk, t_start, t_end, func_name, class_name, start+1, end))
+                        complexity = calculate_complexity(node)
+                        
+                        # 부모 클래스 정보 추출
+                        parent_classes = []
+                        for base in node.bases:
+                            if isinstance(base, ast.Name):
+                                parent_classes.append(base.id)
+                        
+                        # 가변 청크 크기 (복잡도에 따라 조정)
+                        max_tokens = min(512, 128 + complexity * 32)
+                        overlap = min(128, 32 + complexity * 8)
+                        
+                        # 클래스 전체를 하나의 청크로
+                        if len(enc.encode(chunk)) <= max_tokens:
+                            chunks.append((
+                                chunk, 0, len(enc.encode(chunk)), 
+                                func_name, class_name, start+1, end, 
+                                parent_class, complexity, ','.join(parent_classes)
+                            ))
                         else:
-                            chunks.append((chunk, 0, len(enc.encode(chunk)), func_name, class_name, start+1, end))
+                            # 임포트 + 클래스 정의 + docstring을 첫 청크에 포함
+                            class_header = f"{imports_text}\n\n" if imports_text else ""
+                            class_def_line = lines[start]
+                            if docstring:
+                                docstring_lines = docstring.splitlines()
+                                class_header += f"{class_def_line}\n    \"\"\"\n    {docstring}\n    \"\"\"\n"
+                            else:
+                                class_header += f"{class_def_line}\n"
+                            
+                            chunks.append((
+                                class_header, 0, len(enc.encode(class_header)), 
+                                func_name, class_name, start+1, start+1+(1 if not docstring else len(docstring.splitlines())+2), 
+                                parent_class, complexity, ','.join(parent_classes)
+                            ))
+                            
+                            # 나머지 클래스 본문을 청킹
+                            class_body = '\n'.join(lines[start+1:end])
+                            for sub_chunk, t_start, t_end in split_by_tokens(class_body, max_tokens=max_tokens, overlap=overlap):
+                                chunks.append((
+                                    sub_chunk, t_start, t_end, 
+                                    func_name, class_name, start+1, end, 
+                                    parent_class, complexity, ','.join(parent_classes)
+                                ))
+                        
+                        # 클래스 내부 메소드 처리
+                        for child in node.body:
+                            process_node(child, class_name, None, depth+1)
+                    
+                    elif isinstance(node, ast.FunctionDef):
+                        func_name = node.name
+                        
+                        # 함수 docstring 추출
+                        docstring = ast.get_docstring(node)
+                        
+                        # 함수 전체 코드
+                        chunk = '\n'.join(lines[start:end])
+                        complexity = calculate_complexity(node)
+                        
+                        # 가변 청크 크기 (복잡도에 따라 조정)
+                        max_tokens = min(512, 128 + complexity * 32)
+                        overlap = min(128, 32 + complexity * 8)
+                        
+                        # 함수 전체를 하나의 청크로
+                        if len(enc.encode(chunk)) <= max_tokens:
+                            chunks.append((
+                                chunk, 0, len(enc.encode(chunk)), 
+                                func_name, parent_class, start+1, end, 
+                                parent_func, complexity, None
+                            ))
+                        else:
+                            # 임포트 + 함수 정의 + docstring을 첫 청크에 포함
+                            func_header = f"{imports_text}\n\n" if imports_text and not parent_class else ""
+                            func_def_line = lines[start]
+                            if docstring:
+                                docstring_lines = docstring.splitlines()
+                                func_header += f"{func_def_line}\n    \"\"\"\n    {docstring}\n    \"\"\"\n"
+                            else:
+                                func_header += f"{func_def_line}\n"
+                            
+                            chunks.append((
+                                func_header, 0, len(enc.encode(func_header)), 
+                                func_name, parent_class, start+1, start+1+(1 if not docstring else len(docstring.splitlines())+2), 
+                                parent_func, complexity, None
+                            ))
+                            
+                            # 나머지 함수 본문을 청킹
+                            func_body = '\n'.join(lines[start+1:end])
+                            for sub_chunk, t_start, t_end in split_by_tokens(func_body, max_tokens=max_tokens, overlap=overlap):
+                                chunks.append((
+                                    sub_chunk, t_start, t_end, 
+                                    func_name, parent_class, start+1, end, 
+                                    parent_func, complexity, None
+                                ))
+                        
+                        # 중첩 함수 처리
+                        for child in node.body:
+                            process_node(child, parent_class, func_name, depth+1)
+                
+                # 최상위 노드 처리
+                for node in tree.body:
+                    process_node(node)
+                
+                # 청크가 없으면 기본 토큰 기반 청킹 적용
                 if not chunks:
+                    print(f"[INFO] 구조적 청크 없음, 토큰 기반 청킹 적용")
                     for chunk, t_start, t_end in split_by_tokens(source_code, max_tokens=256, overlap=64):
-                        chunks.append((chunk, t_start, t_end, None, None, 1, len(source_code.splitlines())))
+                        chunks.append((chunk, t_start, t_end, None, None, 1, len(source_code.splitlines()), None, 0, None))
+                
                 return chunks
             def chunk_markdown(md_text):
-                pattern = r'(\n#+ .+|\n```[\s\S]+?```|\n\s*\n)'
-                parts = re.split(pattern, md_text)
+                # 마크다운 파싱을 위한 개선된 패턴
+                section_pattern = r'(^|\n)(#+\s+.+)($|\n)'  # 헤더
+                code_pattern = r'(^|\n)```[\s\S]+?```'  # 코드 블록
+                
+                # 섹션 제목과 코드 블록 찾기
+                sections = re.finditer(section_pattern, md_text, re.MULTILINE)
+                code_blocks = re.finditer(code_pattern, md_text, re.MULTILINE)
+                
+                # 섹션과 코드 블록의 위치 정보 수집
+                markers = []
+                for section in sections:
+                    markers.append((section.start(), section.group(2), 'section'))
+                for block in code_blocks:
+                    markers.append((block.start(), block.group(0), 'code'))
+                
+                # 위치 순으로 정렬
+                markers.sort(key=lambda x: x[0])
+                
+                # 의미 단위로 분할
                 chunks = []
-                for part in parts:
-                    part = part.strip()
-                    if not part:
-                        continue
-                    if len(enc.encode(part)) > 256:
-                        for chunk, t_start, t_end in split_by_tokens(part, max_tokens=256, overlap=64):
-                            chunks.append((chunk, t_start, t_end, None, None, None, None))
-                    else:
-                        chunks.append((part, 0, len(enc.encode(part)), None, None, None, None))
+                last_pos = 0
+                for pos, content, marker_type in markers:
+                    # 이전 위치부터 현재 마커까지의 텍스트 처리
+                    if pos > last_pos:
+                        prev_text = md_text[last_pos:pos].strip()
+                        if prev_text:
+                            if len(enc.encode(prev_text)) > 256:
+                                for chunk, t_start, t_end in split_by_tokens(prev_text, max_tokens=256, overlap=64):
+                                    chunk_title = "일반 텍스트"
+                                    chunks.append((chunk, t_start, t_end, None, chunk_title, None, None, None, 1, None))
+                            else:
+                                chunk_title = "일반 텍스트"
+                                chunks.append((prev_text, 0, len(enc.encode(prev_text)), None, chunk_title, None, None, None, 1, None))
+                    
+                    # 마커 자체 처리
+                    if marker_type == 'section':
+                        # 섹션 제목 및 다음 내용 파악
+                        section_title = content
+                        next_marker_pos = md_text.find('\n#', pos + len(content)) if pos + len(content) < len(md_text) else -1
+                        if next_marker_pos == -1:
+                            next_marker_pos = len(md_text)
+                        
+                        section_content = md_text[pos:next_marker_pos].strip()
+                        if len(enc.encode(section_content)) > 256:
+                            for chunk, t_start, t_end in split_by_tokens(section_content, max_tokens=256, overlap=64):
+                                chunks.append((chunk, t_start, t_end, None, section_title, None, None, None, 2, None))
+                        else:
+                            chunks.append((section_content, 0, len(enc.encode(section_content)), None, section_title, None, None, None, 2, None))
+                        
+                        last_pos = next_marker_pos
+                    elif marker_type == 'code':
+                        code_block = content
+                        code_lang = re.search(r'```(\w+)', code_block)
+                        code_lang = code_lang.group(1) if code_lang else ''
+                        
+                        if len(enc.encode(code_block)) > 256:
+                            for chunk, t_start, t_end in split_by_tokens(code_block, max_tokens=256, overlap=64):
+                                chunks.append((chunk, t_start, t_end, code_lang, "코드 블록", None, None, None, 3, None))
+                        else:
+                            chunks.append((code_block, 0, len(enc.encode(code_block)), code_lang, "코드 블록", None, None, None, 3, None))
+                        
+                        last_pos = pos + len(code_block)
+                
+                # 남은 텍스트 처리
+                if last_pos < len(md_text):
+                    remaining_text = md_text[last_pos:].strip()
+                    if remaining_text:
+                        if len(enc.encode(remaining_text)) > 256:
+                            for chunk, t_start, t_end in split_by_tokens(remaining_text, max_tokens=256, overlap=64):
+                                chunks.append((chunk, t_start, t_end, None, "일반 텍스트", None, None, None, 1, None))
+                        else:
+                            chunks.append((remaining_text, 0, len(enc.encode(remaining_text)), None, "일반 텍스트", None, None, None, 1, None))
+                
+                # 청크가 없으면 기본 토큰 기반 청킹 적용
+                if not chunks:
+                    for chunk, t_start, t_end in split_by_tokens(md_text, max_tokens=256, overlap=64):
+                        chunks.append((chunk, t_start, t_end, None, "마크다운", None, None, None, 1, None))
+                
                 return chunks
+                
             def chunk_js(source_code):
-                return [(*x, None, None, None, None) for x in split_by_tokens(source_code, max_tokens=256, overlap=64)]
+                """JavaScript 코드를 구조적으로 청킹하는 함수"""
+                # 함수/클래스/메소드 정의 패턴
+                func_pattern = r'(async\s+)?function\s+(\w+)\s*\([^)]*\)\s*\{'
+                arrow_func_pattern = r'(const|let|var)\s+(\w+)\s*=\s*(async\s+)?\([^)]*\)\s*=>'
+                class_pattern = r'class\s+(\w+)(\s+extends\s+(\w+))?\s*\{'
+                method_pattern = r'(async\s+)?(\w+)\s*\([^)]*\)\s*\{'
+                
+                lines = source_code.splitlines()
+                chunks = []
+                
+                # 임포트/모듈 문 찾기
+                import_lines = []
+                for i, line in enumerate(lines):
+                    if re.match(r'^\s*(import|require|export)\b', line):
+                        import_lines.append(line)
+                
+                imports_text = '\n'.join(import_lines)
+                
+                # 정규식 패턴 매칭으로 함수/클래스 찾기
+                def find_block_end(start_line, opening_char='{', closing_char='}'):
+                    """중괄호 짝을 맞춰 블록 끝 라인 찾기"""
+                    balance = 0
+                    for i in range(start_line, len(lines)):
+                        line = lines[i]
+                        balance += line.count(opening_char) - line.count(closing_char)
+                        if balance <= 0:
+                            return i
+                    return len(lines) - 1
+                
+                # 함수/클래스 찾기
+                i = 0
+                while i < len(lines):
+                    line = lines[i]
+                    
+                    # 함수 정의 찾기
+                    func_match = re.search(func_pattern, line)
+                    arrow_match = re.search(arrow_func_pattern, line)
+                    class_match = re.search(class_pattern, line)
+                    
+                    if func_match or arrow_match or class_match:
+                        start = i
+                        
+                        if func_match:
+                            name = func_match.group(2)
+                            is_class = False
+                            parent_class = None
+                        elif arrow_match:
+                            name = arrow_match.group(2)
+                            is_class = False
+                            parent_class = None
+                        else:  # class_match
+                            name = class_match.group(1)
+                            is_class = True
+                            parent_class = class_match.group(3) if class_match.group(2) else None
+                        
+                        # 블록 끝 찾기
+                        end = find_block_end(start)
+                        
+                        # 전체 코드 청크
+                        chunk = '\n'.join(lines[start:end+1])
+                        
+                        # 복잡도 추정 (라인 수 + 중첩 레벨)
+                        complexity = (end - start) // 5 + chunk.count('{') - chunk.count('}')
+                        complexity = max(1, complexity)
+                        
+                        # 가변 청크 크기
+                        max_tokens = min(512, 128 + complexity * 32)
+                        overlap = min(128, 32 + complexity * 8)
+                        
+                        if len(enc.encode(chunk)) <= max_tokens:
+                            # 전체 함수/클래스를 하나의 청크로
+                            chunks.append((
+                                chunk, 
+                                0, 
+                                len(enc.encode(chunk)), 
+                                None if is_class else name, 
+                                name if is_class else None, 
+                                start+1, 
+                                end+1,
+                                None,  # parent_func
+                                complexity,
+                                parent_class if is_class else None
+                            ))
+                        else:
+                            # 헤더 (임포트 + 함수/클래스 선언)
+                            header = f"{imports_text}\n\n" if imports_text else ""
+                            header += lines[start]
+                            
+                            chunks.append((
+                                header,
+                                0,
+                                len(enc.encode(header)),
+                                None if is_class else name,
+                                name if is_class else None,
+                                start+1,
+                                start+1,
+                                None,  # parent_func
+                                complexity,
+                                parent_class if is_class else None
+                            ))
+                            
+                            # 본문 청킹
+                            body = '\n'.join(lines[start+1:end+1])
+                            for sub_chunk, t_start, t_end in split_by_tokens(body, max_tokens=max_tokens, overlap=overlap):
+                                chunks.append((
+                                    sub_chunk,
+                                    t_start,
+                                    t_end,
+                                    None if is_class else name,
+                                    name if is_class else None,
+                                    start+2,  # 본문 시작
+                                    end+1,
+                                    None,  # parent_func
+                                    complexity,
+                                    parent_class if is_class else None
+                                ))
+                        
+                        # 클래스 내부 메소드 찾기 (클래스인 경우)
+                        if is_class:
+                            method_start = start + 1
+                            while method_start < end:
+                                method_line = lines[method_start]
+                                method_match = re.search(method_pattern, method_line)
+                                
+                                if method_match:
+                                    method_name = method_match.group(2)
+                                    method_end = find_block_end(method_start)
+                                    
+                                    method_chunk = '\n'.join(lines[method_start:method_end+1])
+                                    method_complexity = (method_end - method_start) // 3
+                                    
+                                    # 메소드 청킹
+                                    if len(enc.encode(method_chunk)) <= max_tokens // 2:
+                                        chunks.append((
+                                            method_chunk,
+                                            0,
+                                            len(enc.encode(method_chunk)),
+                                            method_name,
+                                            name,  # 클래스명
+                                            method_start+1,
+                                            method_end+1,
+                                            None,
+                                            method_complexity,
+                                            None
+                                        ))
+                                    else:
+                                        for sub_chunk, t_start, t_end in split_by_tokens(method_chunk, max_tokens=max_tokens//2, overlap=overlap//2):
+                                            chunks.append((
+                                                sub_chunk,
+                                                t_start,
+                                                t_end,
+                                                method_name,
+                                                name,  # 클래스명
+                                                method_start+1,
+                                                method_end+1,
+                                                None,
+                                                method_complexity,
+                                                None
+                                            ))
+                                    
+                                    method_start = method_end + 1
+                                else:
+                                    method_start += 1
+                        
+                        i = end + 1
+                    else:
+                        i += 1
+                
+                # 청크가 없으면 기본 토큰 기반 청킹 적용
+                if not chunks:
+                    for chunk, t_start, t_end in split_by_tokens(source_code, max_tokens=256, overlap=64):
+                        chunks.append((chunk, t_start, t_end, None, None, 1, len(source_code.splitlines()), None, 0, None))
+                
+                return chunks
             # 1. 전체 청크 수집
             all_chunks = []
             for file in files:
@@ -608,8 +999,31 @@ class RepositoryEmbedder:
                 elif ext == '.js':
                     chunks = chunk_js(content)
                 else:
-                    chunks = [(*x, None, None, None, None) for x in split_by_tokens(content, max_tokens=256, overlap=64)]
-                for i, (chunk, t_start, t_end, func_name, class_name, start_line, end_line) in enumerate(chunks):
+                    # 오류 수정: 일반 파일은 split_by_tokens로 처리하고 7개 필드 구조에 맞게 조정
+                    simple_chunks = split_by_tokens(content, max_tokens=256, overlap=64)
+                    chunks = []
+                    for chunk_data in simple_chunks:
+                        # 처음 3개 값은 유지하고 나머지 4개 필요한 값을 None으로 추가
+                        chunk, t_start, t_end = chunk_data  # 여기서 3개 값만 언패킹
+                        chunks.append((chunk, t_start, t_end, None, None, 1, len(content.splitlines())))
+                
+                # 이 부분이 중요: chunks의 모든 항목이 정확히 7개 값을 가지고 있는지 확인
+                processed_chunks = []
+                for chunk_item in chunks:
+                    # 정확히 7개 값을 가지는 튜플로 변환
+                    if len(chunk_item) == 7:
+                        processed_chunks.append(chunk_item)
+                    else:
+                        # 7개가 아닌 경우 필요한 만큼 None을 추가하거나 잘라서 7개로 맞춤
+                        values = list(chunk_item)[:7]  # 최대 7개까지만 사용
+                        while len(values) < 7:
+                            values.append(None)  # 7개가 될 때까지 None 추가
+                        processed_chunks.append(tuple(values))
+                
+                # 처리된 chunks 사용
+                for i, (chunk, t_start, t_end, func_name, class_name, start_line, end_line) in enumerate(processed_chunks):
+                    # 디버그 출력 추가하여 실제 값 확인
+                    print(f"[DEBUG] 청크 추가: 파일={file.get('path')}, 청크={i}, 길이={len(chunk) if chunk else 0}")
                     all_chunks.append((chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line))
             # 2. 비동기 임베딩+역할태깅 함수
             async def embed_and_tag_async(args, client):
@@ -655,6 +1069,21 @@ class RepositoryEmbedder:
                 sha = file.get('sha')
                 source_url = file.get('source_url')
                 path = file['path']
+                # 청크 타입 결정 (class, method, function, code)  
+                chunk_type = "class" if class_name and not func_name else \
+                            "method" if class_name and func_name else \
+                            "function" if func_name and not class_name else \
+                            "code"
+                
+                # 복잡도 추정 (청크 크기 기반)
+                complexity = 0
+                parent_entity = None
+                inheritance = None
+                
+                # 청크 튜플에서 추가 메타데이터 추출 (새 형식인 경우)
+                # chunk_data 변수는 이 스코프에 없으므로 사용하지 않음
+                # 대신 현재 언패킹된 값들을 사용
+                
                 metadata = {
                     "path": path or '',
                     "file_name": file_name or '',
@@ -668,7 +1097,11 @@ class RepositoryEmbedder:
                     "end_line": end_line if end_line is not None else -1,
                     "token_start": t_start if t_start is not None else -1,
                     "token_end": t_end if t_end is not None else -1,
-                    "role_tag": role_tag
+                    "role_tag": role_tag,
+                    "chunk_type": chunk_type,
+                    "complexity": complexity or 1,
+                    "parent_entity": parent_entity or '',
+                    "inheritance": inheritance or ''
                 }
                 self.collection.add(
                     ids=[f"{path}_{i}"],
