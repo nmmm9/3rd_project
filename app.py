@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, Response
 import uuid
+import time
 from github_analyzer import analyze_repository
 from chat_handler import handle_chat, handle_modify_request, apply_changes
 from dotenv import load_dotenv
@@ -72,16 +73,41 @@ def analyze():
         
         # 분석 진행 상황을 위한 응답 헤더 설정
         def generate_progress():
+            # 초기 진행 상태 - 0%
             yield json.dumps({'status': '분석 시작', 'progress': 0}) + '\n'
+            time.sleep(0.5)  # 상태 변경 사이에 약간의 지연 추가
+            
+            # 저장소 정보 수집 - 5%
+            yield json.dumps({'status': '저장소 정보 수집 중...', 'progress': 5}) + '\n'
+            time.sleep(0.5)
             
             try:
-                # 저장소 분석 시작
+                # 저장소 클론 시작 - 10%
                 yield json.dumps({'status': '저장소 클론 중...', 'progress': 10}) + '\n'
+                time.sleep(0.5)
+                
+                # 저장소 클론 진행 - 15%
+                yield json.dumps({'status': '저장소 파일 다운로드 중...', 'progress': 15}) + '\n'
                 
                 print(f"[DEBUG] analyze_repository 호출 시작 (repo_url: {repo_url}, session_id: {session_id})")
                 try:
+                    # 저장소 클론 완료 - 20%
+                    yield json.dumps({'status': '저장소 클론 완료', 'progress': 20}) + '\n'
+                    time.sleep(0.5)
+                    
+                    # 파일 구조 분석 - 25%
+                    yield json.dumps({'status': '파일 구조 분석 중...', 'progress': 25}) + '\n'
+                    time.sleep(0.5)
+                    
+                    # 코드 분석 시작 - 30%
+                    yield json.dumps({'status': '코드 분석 시작...', 'progress': 30}) + '\n'
+                    
                     result = analyze_repository(repo_url, token, session_id)
                     print(f"[DEBUG] analyze_repository 결과: {list(result.keys())}")
+                    
+                    # 코드 분석 진행 - 40%
+                    yield json.dumps({'status': '코드 청크 생성 중...', 'progress': 40}) + '\n'
+                    time.sleep(0.5)
                     
                     if 'files' not in result or 'directory_structure' not in result:
                         print(f"[ERROR] analyze_repository 결과가 올바르지 않습니다: {result}")
@@ -90,9 +116,14 @@ def analyze():
                     files = result['files']
                     directory_structure = result['directory_structure']
                     
+                    # 임베딩 생성 - 50%
+                    yield json.dumps({'status': '임베딩 생성 중...', 'progress': 50}) + '\n'
+                    time.sleep(0.5)
+                    
                     print(f"[DEBUG] 분석된 파일 수: {len(files)}")
                     print(f"[DEBUG] 디렉토리 구조 길이: {len(directory_structure) if directory_structure else 0}")
                     
+                    # 파일 분석 완료 - 60%
                     yield json.dumps({'status': '파일 분석 완료', 'progress': 60}) + '\n'
                 except Exception as e:
                     print(f"[ERROR] analyze_repository 호출 중 오류: {e}")
@@ -100,14 +131,27 @@ def analyze():
                     raise e
                 
                 # 디렉토리 구조 정보 로그 추가
+                # 디렉토리 구조 생성 - 65%
+                yield json.dumps({'status': '디렉토리 구조 생성 중...', 'progress': 65}) + '\n'
+                time.sleep(0.5)
+                
                 if directory_structure:
                     print(f"[DEBUG] 디렉토리 구조 정보 생성 성공 (길이: {len(directory_structure)} 문자)")
                     # 전체 디렉토리 구조 출력
                     print("[DEBUG] 디렉토리 구조 전체:\n" + directory_structure)
-                    yield json.dumps({'status': '디렉토리 구조 생성 완료', 'progress': 80}) + '\n'
+                    
+                    # 디렉토리 구조 생성 완료 - 70%
+                    yield json.dumps({'status': '디렉토리 구조 생성 완료', 'progress': 70}) + '\n'
                 else:
                     print("[DEBUG] 디렉토리 구조 정보가 생성되지 않았습니다.")
-                    yield json.dumps({'status': '디렉토리 구조 생성 실패', 'progress': 80}) + '\n'
+                    yield json.dumps({'status': '디렉토리 구조 생성 실패', 'progress': 70}) + '\n'
+                
+                # 세션 데이터 준비 - 75%
+                yield json.dumps({'status': '세션 데이터 준비 중...', 'progress': 75}) + '\n'
+                time.sleep(0.5)
+                
+                # 세션 데이터 저장 - 80%
+                yield json.dumps({'status': '세션 데이터 저장 중...', 'progress': 80}) + '\n'
                 
                 # 세션 데이터 저장
                 sessions[session_id] = {
@@ -120,7 +164,15 @@ def analyze():
                 # 세션 데이터를 파일에 저장
                 save_sessions(sessions)
                 
+                # 세션 데이터 저장 완료 - 90%
                 yield json.dumps({'status': '세션 데이터 저장 완료', 'progress': 90}) + '\n'
+                time.sleep(0.5)
+                
+                # 최종 처리 - 95%
+                yield json.dumps({'status': '최종 처리 중...', 'progress': 95}) + '\n'
+                time.sleep(0.5)
+                
+                # 분석 완료 - 100%
                 yield json.dumps({
                     'status': '분석 완료', 
                     'progress': 100,
@@ -263,5 +315,67 @@ def check_push_intent():
         traceback.print_exc()
         return jsonify({'error': f'알 수 없는 오류: {str(e)}'}), 500
 
+@app.route('/push_to_github', methods=['POST'])
+def push_to_github():
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        file_name = data.get('file_name')
+        modified_code = data.get('modified_code')
+        
+        if not all([session_id, file_name, modified_code]):
+            return jsonify({'success': False, 'error': '필수 파라미터가 누락되었습니다.'})
+        
+        # 세션 데이터 확인
+        if session_id not in sessions:
+            return jsonify({'success': False, 'error': '세션을 찾을 수 없습니다.'})
+        
+        # 토큰 확인
+        if not sessions.get(session_id, {}).get('token'):
+            return jsonify({'success': False, 'error': 'GitHub 토큰이 설정되지 않았습니다.'})
+        
+        # 기본 커밋 메시지
+        commit_msg = f'AI 분석기를 통한 {file_name} 업데이트'
+        
+        # 변경사항 적용 및 GitHub 푸시
+        result = apply_changes(session_id, file_name, modified_code, True, commit_msg)
+        
+        if result.get('success'):
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': result.get('error', '알 수 없는 오류가 발생했습니다.')})
+    except Exception as e:
+        print(f"[ERROR] GitHub 푸시 중 오류: {str(e)}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/apply_local', methods=['POST'])
+def apply_local():
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        file_name = data.get('file_name')
+        modified_code = data.get('modified_code')
+        
+        if not all([session_id, file_name, modified_code]):
+            return jsonify({'success': False, 'error': '필수 파라미터가 누락되었습니다.'})
+        
+        # 세션 데이터 확인
+        if session_id not in sessions:
+            return jsonify({'success': False, 'error': '세션을 찾을 수 없습니다.'})
+        
+        # 변경사항 로컬에만 적용
+        result = apply_changes(session_id, file_name, modified_code, False, None)
+        
+        if result.get('success'):
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': result.get('error', '알 수 없는 오류가 발생했습니다.')})
+    except Exception as e:
+        print(f"[ERROR] 로컬 적용 중 오류: {str(e)}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
 if __name__ == '__main__':
     app.run(debug=False) 
+    
