@@ -42,7 +42,7 @@
 
 
 ## 📅 프로젝트 과정
-<img src="teammate_img/시스템 아키텍처.PNG" width="1000" />
+<img src="teammate_img/시스템 아키텍처.jpg" width="1000" />
 
 
 ### 1단계 | GitHub 저장소 분석
