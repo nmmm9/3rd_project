@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>github ai 코드 분석 챗봇</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 300vh;
+      background: linear-gradient(to bottom, #05054d 0%, #1a1a40 50%, #305d7f 100%);
+      font-family: Arial, sans-serif;
+      overflow-x: hidden;
+      color: white;
+    }
+
+    .hero {
+      position: fixed;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+      z-index: 1;
+      text-align: center;
+      padding-top: 160px;
+    }
+
+    .hero-image {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%) scale(1.5);
+      z-index: 1;
+      max-width: 100%;
+      max-height: 80vh;
+      object-fit: contain;
+      pointer-events: none;
+    }
+
+    .btn {
+      font-size: 1.2rem;
+      padding: 1rem 2.5rem;
+      border: none;
+      outline: none;
+      border-radius: 0.4rem;
+      cursor: pointer;
+      text-transform: uppercase;
+      background-color: rgb(17, 17, 153);
+      color: rgb(234, 234, 234);
+      font-weight: 700;
+      transition: all 0.4s ease;
+      box-shadow: 0px 0px 60px #2793ce;
+      -webkit-box-reflect: below 10px linear-gradient(to bottom, rgba(0,0,0,0.0), rgba(0,0,0,0.4));
+      margin-top: 2rem;
+      position: relative;
+      z-index: 10;
+      pointer-events: auto;
+    }
+
+    .btn:hover {
+      background: linear-gradient(270deg, rgba(2, 29, 78, 0.681) 0%, rgba(31, 215, 232, 0.873) 60%);
+      color: black;
+      transform: scale(1.05);
+    }
+
+    .overlay-box {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%) translateY(100%);
+      width: 80%;
+      max-width: 900px;
+      min-height: 70vh;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(25px);
+      border-radius: 20px;
+      padding: 40px;
+      opacity: 0;
+      transition: none;
+      z-index: 2;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+      overflow: hidden; /* 🔥 비디오가 삐져나오지 않도록 */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .content-area h2 {
+      margin-bottom: 15px;
+      font-size: 1.8rem;
+    }
+
+    .content-area ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .content-area li {
+      margin: 10px 0;
+      font-size: 1.1rem;
+    }
+
+    .tab-buttons {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(0,0,0,0.3);
+      backdrop-filter: blur(10px);
+      padding: 15px 0;
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      z-index: 3;
+      opacity: 0;
+      transition: none;
+    }
+
+    .tab-buttons button {
+      padding: 10px 20px;
+      background: rgba(0, 0, 0, 0.4);
+      border: none;
+      border-radius: 10px;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    .tab-buttons button:hover {
+      background: rgba(0, 0, 0, 0.6);
+    }
+
+    /* ✅ 스케일+페이드 애니메이션 + 느리게 */
+    .reveal-text {
+      opacity: 0;
+      transform: scale(0.95);
+      transition: all 1.2s ease;
+    }
+
+    .reveal-text.visible {
+      opacity: 1;
+      transform: scale(1);
+    }
+  </style>
+</head>
+<body>
+
+<header id="main-header" class="p-3 flex items-center justify-between" style="height: 100px; background-color: transparent; position: fixed; top: 0; left: 0; width: 100%; z-index: 1000;">
+  <div class="flex items-center">
+    <span class="material-icons text-gray-400 mr-3">menu</span>
+    <img src="/static/logo.jpg" alt="logo" class="h-36 w-36 object-contain mr-2" style="margin-top: -16px; margin-bottom: -16px;" />
+    <span class="text-white font-semibold ml-3 text-lg"></span>
+  </div>
+  <div class="flex items-center">
+    <div class="relative mr-4">
+      <input class="bg-gray-700 text-gray-300 placeholder-gray-500 rounded-md py-1.5 px-3 pl-8 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" placeholder="/ Type to search" style="width: 300px;" type="text"/>
+      <span class="material-icons absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 text-lg">search</span>
+    </div>
+    <a href="/login"><button class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium">로그인</button></a>
+    <a href="/signup"><button class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium ml-2">회원가입</button></a>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="reveal-text" id="heroText">
+    <h1 style="font-size: 2.8rem; font-weight: bold; margin-bottom: 1rem; line-height: 1.2;">개발자와 AI의 새로운 협업 방식</h1>
+    <p style="font-size: 1.2rem; color: #d1d5db;">코드 리뷰, 리팩토링, 문서화까지 하나의 챗봇으로 빠르고 정확하게</p>
+    <a href="/login"><button class="btn">GET STARTED WITH GITHUB</button></a>
+  </div>
+</div>
+
+<img src="../static/a.png" alt="Hero Image" class="hero-image">
+
+<div class="overlay-box" id="overlay">
+  <div class="content-area" id="content">
+    <h2>refactoring</h2>
+    <ul>
+      <li>✅ Build Linux — 1m 42s</li>
+      <li>✅ Build macOS — 1m 24s</li>
+      <li>✅ Build Windows — 1m 36s</li>
+    </ul>
+  </div>
+</div>
+
+<div class="tab-buttons" id="buttons">
+  <button onclick="showTab('build')">refactoring</button>
+  <button onclick="showTab('test')">code review</button>
+  <button onclick="showTab('publish')">document</button>
+</div>
+
+<script>
+  const overlay = document.getElementById('overlay');
+  const buttons = document.getElementById('buttons');
+  const content = document.getElementById('content');
+
+  const contentMap = {
+  build: `
+    <video 
+      src="/static/1.mp4" 
+      controls 
+      autoplay 
+      muted 
+      loop 
+      style="
+        width: 100%;
+        height: auto;
+        max-height: 60vh;
+        object-fit: contain;
+        border-radius: 12px;
+        box-shadow: 0 0 20px rgba(0,0,0,0.3);">
+    </video>
+  `,
+    test: `
+      <h2>Test</h2>
+      <ul>
+        <li>✅ Unit Tests — Passed</li>
+        <li>✅ Integration Tests — Passed</li>
+        <li>✅ E2E Tests — Passed</li>
+      </ul>
+    `,
+    publish: `
+      <h2>Publish</h2>
+      <ul>
+        <li>🟡 Publish Linux — Waiting for approval</li>
+        <li>🟡 Publish macOS — Waiting for approval</li>
+        <li>🟡 Publish Windows — Waiting for approval</li>
+      </ul>
+    `
+  };
+
+  function showTab(tab) {
+    content.innerHTML = contentMap[tab];
+  }
+
+  let overlayInitialized = false; // ✅ 한 번만 실행되도록 제어
+
+  window.addEventListener('scroll', () => {
+    const scrollY = window.scrollY;
+    const startScroll = 300;
+    const maxScroll = 1000;
+
+    if (scrollY > startScroll) {
+      const effectiveScroll = scrollY - startScroll;
+      const scrollRatio = Math.min(effectiveScroll / maxScroll, 1);
+      const translateY = 100 - (scrollRatio * 120);
+      const opacity = scrollRatio;
+
+      overlay.style.transform = `translateX(-50%) translateY(${translateY}%)`;
+      overlay.style.opacity = opacity;
+      overlay.classList.add('active');
+
+      if (scrollRatio > 0.85) {
+        const buttonOpacity = (scrollRatio - 0.85) / 0.15;
+        buttons.style.opacity = buttonOpacity;
+        buttons.classList.add('active');
+      } else {
+        buttons.style.opacity = 0;
+        buttons.classList.remove('active');
+      }
+
+      if (!overlayInitialized && scrollRatio > 0.2) {
+        showTab('build');
+        overlayInitialized = true;
+      }
+
+    } else {
+      overlay.style.transform = `translateX(-50%) translateY(100%)`;
+      overlay.style.opacity = 0;
+      overlay.classList.remove('active');
+      buttons.style.opacity = 0;
+      buttons.classList.remove('active');
+
+      overlayInitialized = false; // 다시 올라가면 초기화돼야 다시 실행됨
+    }
+
+    
+  });
+
+  // ✅ 스크롤 올라올 때 재적용 되도록 애니메이션 리셋
+  const heroText = document.getElementById('heroText');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        heroText.classList.remove('visible');
+        void heroText.offsetWidth; // 트릭: 강제로 reflow
+        heroText.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.5 });
+
+  observer.observe(heroText);
+</script>
+
+</body>
+</html>
