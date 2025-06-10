@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, Response
+from flask import Flask, render_template, request, redirect, url_for, jsonify, Response, session, flash
 import uuid
 import time
 from github_analyzer import analyze_repository
@@ -11,8 +11,21 @@ import traceback
 import json
 import openai
 from chat_handler import detect_github_push_intent
+import requests
+import bcrypt  # 비밀번호 해싱을 위한 모듈 추가
 
 load_dotenv()
+
+# GitHub OAuth 설정
+GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID")
+GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET")
+
+# GITHUB_CLIENT_ID와 GITHUB_CLIENT_SECRET이 .env 파일에 있는지 확인
+if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+    print("오류: GitHub OAuth Client ID 또는 Secret이 설정되어 있지 않습니다. .env 파일에 GITHUB_CLIENT_ID와 GITHUB_CLIENT_SECRET을 등록하세요.")
+    # 실제 운영 환경에서는 여기서 프로그램을 종료하거나 기본값으로 설정하는 등의 처리가 필요할 수 있습니다.
+    # 여기서는 경고만 출력하고 진행합니다.
+    # sys.exit(1) # 필요에 따라 주석 해제
 
 import openai
 openai.api_key = os.environ.get("OPENAI_API_KEY")
@@ -24,7 +37,11 @@ if not key:
     print("오류: OpenAI API 키가 설정되어 있지 않습니다. .env 파일에 OPENAI_API_KEY를 등록하세요.")
     sys.exit(1)
 
-db.init_db()
+# 데이터베이스 초기화
+db_initialized = db.init_db()
+if not db_initialized:
+    print("오류: 데이터베이스 초기화에 실패했습니다.")
+    sys.exit(1)
 
 # 세션 데이터를 파일에 저장하고 로드하는 함수
 def save_sessions(sessions_data):
@@ -48,12 +65,241 @@ def load_sessions():
     return {}
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24) # Flask 세션을 위한 secret_key 설정
 
 sessions = load_sessions()  # session_id: {'repo_url': ..., 'token': ..., 'files': ...}
 
 @app.route('/')
+def home():
+    # 로그인 상태 확인
+    if 'user_id' in session:
+        return redirect(url_for('index')) # 로그인 되어 있으면 index로
+    return render_template('landing.html') # 아니면 landing 페이지
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        if not username or not password:
+            flash('사용자 이름과 비밀번호를 모두 입력해주세요.', 'error')
+            return render_template('login.html')
+        
+        # 사용자 정보 조회
+        user = db.get_user_by_username(username)
+        
+        if not user:
+            flash('사용자 이름 또는 비밀번호가 올바르지 않습니다.', 'error')
+            return render_template('login.html')
+        
+        # 비밀번호 검증
+        if user.get('is_github_user'):
+            # GitHub 사용자인 경우 (비밀번호가 없을 수 있음)
+            flash('GitHub 로그인을 이용해주세요.', 'error')
+            return render_template('login.html')
+        
+        if not user.get('password'):
+            flash('비밀번호가 설정되지 않은 계정입니다. 관리자에게 문의하세요.', 'error')
+            return render_template('login.html')
+        
+        # 비밀번호 확인
+        if not bcrypt.checkpw(password.encode('utf-8'), user.get('password').encode('utf-8')):
+            flash('사용자 이름 또는 비밀번호가 올바르지 않습니다.', 'error')
+            return render_template('login.html')
+        
+        # 로그인 성공 처리
+        session['user_id'] = user.get('id')
+        session['username'] = user.get('username')
+        
+        # 마지막 로그인 시간 업데이트
+        db.update_last_login(user.get('id'))
+        
+        return redirect(url_for('index'))
+    
+    # GET 요청 처리
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+# GitHub 로그인 시작
+@app.route('/login/github')
+def github_login():
+    if not GITHUB_CLIENT_ID:
+        flash('GitHub Client ID가 설정되지 않았습니다.', 'error')
+        return redirect(url_for('login'))
+    
+    # 사용자를 GitHub 인증 페이지로 리디렉션
+    github_auth_url = (
+        f"https://github.com/login/oauth/authorize"
+        f"?client_id={GITHUB_CLIENT_ID}"
+        f"&scope=repo,user"  # 필요한 권한 범위 (예: public_repo, repo, user 등)
+    )
+    return redirect(github_auth_url)
+
+# GitHub 로그인 콜백 처리
+@app.route('/github/callback')
+def github_callback():
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        flash('GitHub Client ID 또는 Secret이 설정되지 않았습니다.', 'error')
+        return redirect(url_for('login'))
+
+    code = request.args.get('code')
+    if not code:
+        flash('인증 코드를 받지 못했습니다.', 'error')
+        return redirect(url_for('login'))
+
+    # 인증 코드를 사용하여 액세스 토큰 요청
+    token_url = "https://github.com/login/oauth/access_token"
+    payload = {
+        'client_id': GITHUB_CLIENT_ID,
+        'client_secret': GITHUB_CLIENT_SECRET,
+        'code': code
+    }
+    headers = {'Accept': 'application/json'}
+    token_response = requests.post(token_url, data=payload, headers=headers)
+    token_data = token_response.json()
+
+    access_token = token_data.get('access_token')
+    if not access_token:
+        error_description = token_data.get('error_description', '알 수 없는 오류')
+        flash(f'액세스 토큰을 얻는 데 실패했습니다: {error_description}', 'error')
+        return redirect(url_for('login'))
+
+    # 액세스 토큰을 사용하여 사용자 정보 가져오기
+    user_info_url = "https://api.github.com/user"
+    headers = {'Authorization': f'token {access_token}'}
+    user_info_response = requests.get(user_info_url, headers=headers)
+    user_info = user_info_response.json()
+
+    # GitHub 사용자 정보
+    github_id = str(user_info.get('id'))
+    github_username = user_info.get('login')
+    github_email = user_info.get('email', f"{github_username}@github.com")  # 이메일이 없을 경우 임의 생성
+    github_avatar_url = user_info.get('avatar_url')
+    github_name = user_info.get('name', github_username)  # 이름이 없을 경우 사용자명 사용
+    
+    # 이미 등록된 GitHub 사용자인지 확인
+    user = db.get_user_by_github_id(github_id)
+    
+    if user:
+        # 기존 사용자 - 로그인 처리
+        session['user_id'] = user.get('id')
+        session['username'] = user.get('username')
+        session['is_github_user'] = True
+        session['github_token'] = access_token
+        
+        # GitHub 토큰 업데이트
+        db.update_user(user.get('id'), {'github_token': access_token})
+        
+        # 마지막 로그인 시간 업데이트
+        db.update_last_login(user.get('id'))
+    else:
+        # 새로운 사용자 - 회원가입 처리
+        success, result = db.create_user(
+            username=github_username,
+            email=github_email,
+            is_github_user=True,
+            github_id=github_id,
+            github_username=github_username,
+            github_token=access_token,
+            github_avatar_url=github_avatar_url
+        )
+        
+        if success:
+            user_id = result
+            session['user_id'] = user_id
+            session['username'] = github_username
+            session['is_github_user'] = True
+            session['github_token'] = access_token
+        else:
+            flash(f'GitHub 회원가입 실패: {result}', 'error')
+            return redirect(url_for('login'))
+    
+    # 세션에 GitHub 정보 저장 (기존 코드와의 호환성 유지)
+    session['github_token'] = access_token
+    session['user_info'] = {
+        'login': github_username,
+        'id': github_id,
+        'avatar_url': github_avatar_url,
+        'name': github_name
+    }
+    
+    print(f"[DEBUG] GitHub 로그인 성공: {github_username}")
+    return redirect(url_for('index'))
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('home'))
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        confirm = request.form.get('confirm')
+        
+        # 입력값 검증
+        if not all([username, email, password, confirm]):
+            flash('모든 필드를 입력해주세요.', 'error')
+            return render_template('signup.html', signup_success=False)
+        
+        if password != confirm:
+            flash('비밀번호가 일치하지 않습니다.', 'error')
+            return render_template('signup.html', signup_success=False)
+        
+        # 비밀번호 해싱
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        # 사용자 생성
+        success, result = db.create_user(
+            username=username,
+            email=email,
+            password=hashed_password,
+            is_github_user=False
+        )
+        
+        if not success:
+            flash(f'회원가입 실패: {result}', 'error')
+            return render_template('signup.html', signup_success=False)
+        
+        # 회원가입 성공 시 성공 페이지 표시
+        return render_template('signup.html', signup_success=True)
+    
+    # GET 요청 처리
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    return render_template('signup.html', signup_success=False)
+
+@app.route('/index')
 def index():
-    return render_template('index.html')
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    repositories = []
+    user_info = session.get('user_info')
+
+    if 'github_token' in session:
+        token = session['github_token']
+        headers = {
+            'Authorization': f'token {token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        # 사용자의 레포지토리 목록 가져오기
+        repos_url = 'https://api.github.com/user/repos?type=owner&sort=updated&per_page=10'
+        try:
+            response = requests.get(repos_url, headers=headers)
+            response.raise_for_status()
+            repositories = response.json()
+            print(f"[DEBUG] Fetched {len(repositories)} repositories for user {user_info.get('login') if user_info else 'Unknown'}")
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Failed to fetch repositories: {e}")
+            repositories = []
+
+    return render_template('index.html', repositories=repositories, user_info=user_info)
 
 @app.route('/chat/<session_id>')
 def chat(session_id):
@@ -62,6 +308,11 @@ def chat(session_id):
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
+        # 로그인 여부 확인
+        if 'user_id' not in session:
+            return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+        
+        user_id = session.get('user_id')
         data = request.get_json()
         repo_url = data.get('repo_url')
         token = data.get('token')
@@ -153,7 +404,7 @@ def analyze():
                 # 세션 데이터 저장 - 80%
                 yield json.dumps({'status': '세션 데이터 저장 중...', 'progress': 80}) + '\n'
                 
-                # 세션 데이터 저장
+                # 세션 데이터를 메모리와 데이터베이스에 저장
                 sessions[session_id] = {
                     'repo_url': repo_url,
                     'token': token,
@@ -161,8 +412,11 @@ def analyze():
                     'directory_structure': directory_structure
                 }
                 
-                # 세션 데이터를 파일에 저장
+                # 세션 데이터를 파일에 저장 (기존 호환성 유지)
                 save_sessions(sessions)
+                
+                # 세션 데이터를 데이터베이스에 저장
+                db.create_session(session_id, user_id, repo_url, token)
                 
                 # 세션 데이터 저장 완료 - 90%
                 yield json.dumps({'status': '세션 데이터 저장 완료', 'progress': 90}) + '\n'
@@ -194,6 +448,10 @@ def analyze():
 @app.route('/chat', methods=['POST'])
 def chat_api():
     try:
+        # 로그인 여부 확인
+        if 'user_id' not in session:
+            return jsonify({'error': '로그인이 필요합니다.'}), 401
+        
         data = request.get_json()
         session_id = data.get('session_id')
         message = data.get('message')
@@ -220,6 +478,10 @@ def chat_api():
 @app.route('/modify_request', methods=['POST'])
 def modify_request():
     try:
+        # 로그인 여부 확인
+        if 'user_id' not in session:
+            return jsonify({'error': '로그인이 필요합니다.'}), 401
+        
         data = request.get_json()
         session_id = data.get('session_id')
         message = data.get('message')
@@ -246,6 +508,10 @@ def modify_request():
 @app.route('/apply_changes', methods=['POST'])
 def apply_changes_api():
     try:
+        # 로그인 여부 확인
+        if 'user_id' not in session:
+            return jsonify({'error': '로그인이 필요합니다.'}), 401
+        
         data = request.get_json()
         session_id = data.get('session_id')
         file_name = data.get('file_name')
@@ -291,6 +557,10 @@ def apply_changes_api():
 def check_push_intent():
     """사용자 메시지에서 GitHub 푸시 의도를 감지하는 API"""
     try:
+        # 로그인 여부 확인
+        if 'user_id' not in session:
+            return jsonify({'error': '로그인이 필요합니다.'}), 401
+        
         data = request.get_json()
         message = data.get('message', '')
         session_id = data.get('session_id')
@@ -318,6 +588,10 @@ def check_push_intent():
 @app.route('/push_to_github', methods=['POST'])
 def push_to_github():
     try:
+        # 로그인 여부 확인
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'error': '로그인이 필요합니다.'}), 401
+        
         data = request.get_json()
         session_id = data.get('session_id')
         file_name = data.get('file_name')
@@ -352,6 +626,10 @@ def push_to_github():
 @app.route('/apply_local', methods=['POST'])
 def apply_local():
     try:
+        # 로그인 여부 확인
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'error': '로그인이 필요합니다.'}), 401
+        
         data = request.get_json()
         session_id = data.get('session_id')
         file_name = data.get('file_name')
@@ -375,6 +653,32 @@ def apply_local():
         print(f"[ERROR] 로컬 적용 중 오류: {str(e)}")
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
+
+# 사용자 프로필 페이지
+@app.route('/profile')
+def profile():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    user_id = session.get('user_id')
+    
+    # 데이터베이스에서 사용자 정보 조회
+    user = None
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+                user = cursor.fetchone()
+        finally:
+            conn.close()
+    
+    if not user:
+        flash('사용자 정보를 찾을 수 없습니다.', 'error')
+        return redirect(url_for('index'))
+    
+    return render_template('profile.html', user=user)
 
 if __name__ == '__main__':
     app.run(debug=False) 

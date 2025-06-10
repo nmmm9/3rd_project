@@ -50,3 +50,11 @@ dist/
 *.egg-info/ 
 
 sessions.json
+
+3rd_project/
+
+screen_test/
+
+Output/
+
+

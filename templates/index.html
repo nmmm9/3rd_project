@@ -100,42 +100,57 @@
     <button class="p-1.5 rounded-md hover:bg-gray-700 mr-2">
       <span class="material-icons text-gray-400">inbox</span>
     </button>
-    <img alt="User avatar" class="w-8 h-8 rounded-full" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8ljbNzHJUH9ZC9WD5AFSxwpOS3_ZcKoBsLH4ppNnwv7l3PC3qZkbjVVuRXDv_LB2aLAVzFpGwFvpgU939wCp2HDeAroJdPNVKcOjo-5whV-vaimG-X5ivF_RqhmCDcnM2Bi5WXW47zGRSkP87NchAS8fDloSnEPGY0npOYffb2D5qh2IzUJZUTY6fiJmDe041cG7cQk4McvdpSkgvIh0XcwZREUgolNXnwo0yjX29hajqa2PMtaJeo8ic779fqzftRvUOJJdkRck"/>
+    {% if user_info and user_info.avatar_url %}
+      <img alt="User avatar" class="w-8 h-8 rounded-full mr-2" src="{{ user_info.avatar_url }}"/>
+    {% else %}
+      <span class="material-icons text-gray-400 mr-2">account_circle</span>
+    {% endif %}
+    {% if user_info and user_info.login %}
+      <span class="text-white text-sm mr-3">{{ user_info.login }}</span>
+    {% endif %}
+    <a href="{{ url_for('logout') }}" class="p-1.5 rounded-md hover:bg-gray-700 mr-2" title="Logout">
+      <span class="material-icons text-gray-400">logout</span>
+    </a>
   </div>
 </header>
 
 <!-- 메인 컨텐츠 영역 -->
 <div class="flex flex-1">
   <!-- 왼쪽 사이드바 네비게이션 -->
+  {% if user_info %}
   <div class="bg-gray-800 w-64 border-r border-gray-700 flex-shrink-0 hidden md:block">
     <div class="p-4">
       <div class="mb-6">
-        <h2 class="text-white font-semibold mb-3">Top repositories</h2>
+        <h2 class="text-white font-semibold mb-3">My Repositories</h2>
         <div class="flex justify-between items-center mb-2">
-          <input type="text" placeholder="Find a repository..." class="w-full bg-gray-700 text-gray-300 rounded-md py-1 px-2 text-sm border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500">
+          <input type="text" placeholder="Find a repository..." class="w-full bg-gray-700 text-gray-300 rounded-md py-1 px-2 text-sm border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" id="repo-search-input">
         </div>
         <div class="mt-3">
-          <ul class="space-y-2">
-            <li class="flex items-center">
-              <span class="w-4 h-4 mr-2 rounded-full bg-green-500 flex-shrink-0"></span>
-              <a href="#" class="text-gray-300 hover:text-white text-sm truncate">SKN12/coding_test_study</a>
-            </li>
-            <li class="flex items-center">
-              <span class="w-4 h-4 mr-2 rounded-full bg-blue-500 flex-shrink-0"></span>
-              <a href="#" class="text-gray-300 hover:text-white text-sm truncate">SKN12/ai_project</a>
-            </li>
-            <li class="flex items-center">
-              <span class="w-4 h-4 mr-2 rounded-full bg-orange-500 flex-shrink-0"></span>
-              <a href="#" class="text-gray-300 hover:text-white text-sm truncate">SKN12/code-analyzer</a>
-            </li>
-          </ul>
-          <button class="text-xs text-gray-400 hover:text-gray-200 mt-3 flex items-center">
-            <span>Show more</span>
-          </button>
+          {% if repositories %}
+            <ul class="space-y-2" id="repo-list">
+              {% for repo in repositories %}
+                <li class="flex items-center repo-item">
+                  <span class="w-3 h-3 mr-2 rounded-full {% if repo.private %}bg-red-500{% else %}bg-green-500{% endif %} flex-shrink-0" title="{% if repo.private %}Private{% else %}Public{% endif %}"></span>
+                  <a href="{{ repo.html_url }}" target="_blank" class="text-gray-300 hover:text-white text-sm truncate" title="{{ repo.full_name }}">{{ repo.owner.login }}/{{ repo.name }}</a>
+                </li>
+              {% endfor %}
+            </ul>
+            {% if repositories|length == 10 %} {# Assuming per_page=10 from app.py #}
+            <a href="https://github.com/{{ user_info.login }}?tab=repositories" target="_blank" class="text-xs text-gray-400 hover:text-gray-200 mt-3 flex items-center">
+              <span>Show all repositories on GitHub</span>
+              <span class="material-icons text-xs ml-1">open_in_new</span>
+            </a>
+            {% endif %}
+          {% else %}
+            <p class="text-gray-400 text-sm">No repositories found or could not fetch them.</p>
+            <p class="text-gray-400 text-sm mt-1">Ensure you have granted 'repo' access if you have private repositories.</p>
+          {% endif %}
         </div>
       </div>
+      <!-- 다른 사이드바 메뉴 항목들 (필요시 추가) -->
     </div>
   </div>
+  {% endif %}
   <!-- 메인 컨텐츠 -->
   <div class="flex-1">
 <main class="flex-1 flex flex-row items-start justify-center p-8">
