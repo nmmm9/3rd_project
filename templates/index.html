@@ -319,6 +319,17 @@
                             
                             if (data.progress === 100 && data.session_id) {
                                 sessionId = data.session_id;
+                                console.log("세션 ID 수신:", sessionId);
+                                // 이미 분석된 레포지토리에 대한 메시지가 있으면 표시
+                                if (data.message) {
+                                    document.getElementById('progress-status').innerText = data.message;
+                                    // 3초간 메시지 표시 후 이동
+                                    setTimeout(() => {
+                                        window.location.href = `/chat/${sessionId}`;
+                                    }, 1500);
+                                } else {
+                                    window.location.href = `/chat/${sessionId}`;
+                                }
                             }
                         } catch (parseError) {
                             console.error('JSON 파싱 오류:', parseError, line);
@@ -326,11 +337,18 @@
                     }
                 }
                 if (sessionId) {
-                    window.location.href = `/chat/${sessionId}`;
+                    // 세션 ID가 있지만 아직 리다이렉트되지 않은 경우
+                    if (!window.location.href.includes(`/chat/${sessionId}`)) {
+                        window.location.href = `/chat/${sessionId}`;
+                    }
                 } else {
-                    throw new Error('세션 ID를 받지 못했습니다.');
+                    console.error('세션 ID를 받지 못했습니다. 서버 로그를 확인해 주세요.');
+                    document.getElementById('progress-status').innerText = '세션 생성에 실패했습니다.';
+                    document.getElementById('loading-overlay').style.display = 'none';
+                    document.getElementById('status').innerText = `오류: 세션 ID를 받지 못했습니다. 서버 로그를 확인하거나 GitHub URL이 올바른지 확인해 주세요.`;
                 }
             } catch (error) {
+                stopFakeProgress(); // 오류 발생 시 가상 진행률 중지
                 document.getElementById('loading-overlay').style.display = 'none';
                 document.getElementById('status').innerText = `오류: ${error.message}`;
                 console.error('분석 오류:', error);

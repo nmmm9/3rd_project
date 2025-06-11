@@ -509,6 +509,48 @@ class GitHubRepositoryFetcher:
             print(f"[오류] 토큰 저장 실패: {str(e)}")
             return False
 
+    def load_repo_data(self) -> bool:
+        """
+        기존에 분석된 저장소 데이터를 로드합니다.
+        
+        Returns:
+            bool: 데이터 로드 성공 여부
+        """
+        try:
+            # 저장소 폴더가 존재하는지 확인
+            if not os.path.exists(self.repo_path):
+                print(f"[WARNING] 저장소 폴더가 존재하지 않습니다: {self.repo_path}")
+                return False
+                
+            # 이미 필터링된 파일 목록이 있는지 확인
+            if self.files:
+                print("[DEBUG] 이미 파일 목록이 로드되어 있습니다.")
+                return True
+                
+            # 파일 필터링 및 내용 가져오기
+            self.filter_main_files()
+            self.files = self.get_file_contents()
+            
+            if not self.files:
+                print("[WARNING] 파일 목록을 로드할 수 없습니다.")
+                return False
+                
+            print(f"[DEBUG] 저장소 데이터 로드 성공: {len(self.files)} 파일")
+            return True
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] 저장소 데이터 로드 실패: {e}")
+            traceback.print_exc()
+            return False
+            
+    def get_directory_structure(self) -> str:
+        """
+        저장소의 디렉토리 구조를 문자열로 반환합니다.
+        
+        Returns:
+            str: 디렉토리 구조 트리 텍스트
+        """
+        return self.generate_directory_structure()
 
 class RepositoryEmbedder:
     """

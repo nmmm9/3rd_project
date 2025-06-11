@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, Response, session, flash
 import uuid
 import time
-from github_analyzer import analyze_repository
+from github_analyzer import analyze_repository, GitHubRepositoryFetcher
 from chat_handler import handle_chat, handle_modify_request, apply_changes
 from dotenv import load_dotenv
 import os
@@ -175,7 +175,32 @@ def github_callback():
     # GitHub 사용자 정보
     github_id = str(user_info.get('id'))
     github_username = user_info.get('login')
-    github_email = user_info.get('email', f"{github_username}@github.com")  # 이메일이 없을 경우 임의 생성
+    
+    # 이메일 정보 얻기
+    # 일부 사용자는 기본 정보에 이메일이 없을 수 있으므로 이메일 API도 호출
+    github_email = user_info.get('email')
+    if not github_email:
+        try:
+            emails_url = "https://api.github.com/user/emails"
+            emails_response = requests.get(emails_url, headers=headers)
+            emails_data = emails_response.json()
+            
+            # 기본 이메일(primary) 찾기
+            for email_info in emails_data:
+                if email_info.get('primary'):
+                    github_email = email_info.get('email')
+                    break
+            
+            # 기본 이메일이 없으면 첫 번째 이메일 사용
+            if not github_email and emails_data:
+                github_email = emails_data[0].get('email')
+        except Exception as e:
+            print(f"[WARNING] GitHub 이메일 정보 조회 실패: {e}")
+    
+    # 이메일이 여전히 없으면 임의로 생성
+    if not github_email:
+        github_email = f"{github_username}@github.example.com"
+    
     github_avatar_url = user_info.get('avatar_url')
     github_name = user_info.get('name', github_username)  # 이름이 없을 경우 사용자명 사용
     
@@ -303,7 +328,97 @@ def index():
 
 @app.route('/chat/<session_id>')
 def chat(session_id):
-    return render_template('chat.html', session_id=session_id)
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    user_id = session.get('user_id')
+    
+    # 세션 데이터 확인
+    from app import sessions as app_sessions
+    session_data = app_sessions.get(session_id, {})
+    
+    if not session_data:
+        flash('존재하지 않는 세션입니다.', 'error')
+        return redirect(url_for('index'))
+    
+    # 레포지토리 URL 가져오기
+    repo_url = session_data.get('repo_url', '')
+    
+    # 사용자의 모든 채팅 세션 가져오기
+    chat_sessions = db.get_all_chat_sessions(user_id, repo_url)
+    
+    return render_template('chat.html', session_id=session_id, repo_url=repo_url, chat_sessions=chat_sessions)
+
+@app.route('/new-chat', methods=['POST'])
+def new_chat():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    user_id = session.get('user_id')
+    data = request.get_json()
+    repo_url = data.get('repo_url')
+    token = data.get('token')
+    
+    if not repo_url:
+        return jsonify({'status': '에러', 'error': '레포지토리 URL이 필요합니다.'}), 400
+    
+    # 새 채팅 세션 생성
+    session_id = db.create_new_chat_session(user_id, repo_url, token)
+    
+    if not session_id:
+        return jsonify({'status': '에러', 'error': '새 채팅 생성 실패'}), 500
+    
+    # 세션 메모리에 기본 데이터 추가
+    try:
+        # 기존 세션에서 파일 정보 복사
+        from app import sessions as app_sessions
+        # 같은 레포의 기존 세션 찾기
+        existing_sessions = [s_id for s_id, s_data in app_sessions.items() 
+                            if s_data.get('repo_url') == repo_url]
+        
+        # 세션 데이터 초기화
+        app_sessions[session_id] = {
+            'repo_url': repo_url,
+            'token': token
+        }
+        
+        # 기존 세션이 있으면 파일 정보 복사
+        if existing_sessions:
+            existing_session_id = existing_sessions[0]
+            existing_data = app_sessions.get(existing_session_id, {})
+            if 'files' in existing_data:
+                app_sessions[session_id]['files'] = existing_data['files']
+            if 'directory_structure' in existing_data:
+                app_sessions[session_id]['directory_structure'] = existing_data['directory_structure']
+        
+        # 세션 데이터 저장
+        save_sessions(app_sessions)
+    except Exception as e:
+        print(f"[ERROR] 세션 메모리 업데이트 실패: {e}")
+    
+    return jsonify({'status': '성공', 'session_id': session_id})
+
+@app.route('/chat-sessions', methods=['GET'])
+def get_chat_sessions():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    user_id = session.get('user_id')
+    repo_url = request.args.get('repo_url')
+    
+    if not repo_url:
+        return jsonify({'status': '에러', 'error': '레포지토리 URL이 필요합니다.'}), 400
+    
+    # 채팅 세션 목록 가져오기
+    chat_sessions = db.get_all_chat_sessions(user_id, repo_url)
+    
+    return jsonify({
+        'status': '성공',
+        'chat_sessions': chat_sessions
+    })
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -319,45 +434,109 @@ def analyze():
         if not repo_url or not repo_url.startswith('https://github.com/'):
             return jsonify({'status': '에러', 'error': '올바른 GitHub 저장소 URL을 입력하세요.'}), 400
         
-        # 새 세션 ID 생성
+        # GitHub 분석 모듈 미리 임포트
+        from github_analyzer import analyze_repository, GitHubRepositoryFetcher
+        
+        # 새 세션 ID 생성 - 처음부터 생성하여 사용
         session_id = str(uuid.uuid4())
+        print(f"[DEBUG] 새 세션 ID 생성: {session_id}")
+        
+        # 이미 분석한 레포지토리인지 확인
+        existing_session = db.get_session_by_repo_url(user_id, repo_url)
+        if existing_session:
+            session_id = existing_session['session_id']
+            print(f"[DEBUG] 기존에 분석된 레포지토리를 발견했습니다. 세션 ID: {session_id}")
+            # 채팅 기록 가져오기
+            chat_history = db.get_chat_history(session_id)
+            if chat_history:
+                print(f"[DEBUG] 기존 채팅 기록이 {len(chat_history)}건 있습니다.")
+            
+            # 기존 세션 데이터가 메모리에 없으면 복원
+            if session_id not in sessions:
+                print(f"[DEBUG] 세션 ID {session_id}의 데이터를 메모리에 복원합니다.")
+                # DB에서 조회한 세션 정보로 기본 데이터 설정
+                sessions[session_id] = {
+                    'repo_url': repo_url,
+                    'token': token
+                }
+                
+                # github_analyzer.py 사용하여 파일 정보 복원 (필요시)
+                try:
+                    # 레포지토리에서 직접 파일 정보 불러오기
+                    fetcher = GitHubRepositoryFetcher(repo_url, token, session_id)
+                    if fetcher.repo_path and os.path.exists(fetcher.repo_path):
+                        print(f"[DEBUG] 기존 저장소 경로 확인: {fetcher.repo_path}")
+                        # 기존 데이터 불러오기
+                        if fetcher.load_repo_data():
+                            sessions[session_id]['files'] = fetcher.files
+                            sessions[session_id]['directory_structure'] = fetcher.get_directory_structure()
+                            save_sessions(sessions)
+                            print(f"[DEBUG] 세션 ID {session_id}의 기존 파일 정보가 복원되었습니다.")
+                        else:
+                            print(f"[WARNING] 기존 데이터 불러오기 실패, 새로 분석합니다")
+                            # 실패시 새로 분석
+                            result = analyze_repository(repo_url, token, session_id)
+                            if 'files' in result and 'directory_structure' in result:
+                                sessions[session_id]['files'] = result['files']
+                                sessions[session_id]['directory_structure'] = result['directory_structure']
+                                save_sessions(sessions)
+                                print(f"[DEBUG] 세션 ID {session_id}의 파일 정보가 재분석되어 복원되었습니다.")
+                    else:
+                        # 저장소 폴더가 없으면 새로 분석
+                        result = analyze_repository(repo_url, token, session_id)
+                        if 'files' in result and 'directory_structure' in result:
+                            sessions[session_id]['files'] = result['files']
+                            sessions[session_id]['directory_structure'] = result['directory_structure']
+                            save_sessions(sessions)
+                            print(f"[DEBUG] 세션 ID {session_id}의 파일 정보가 새로 분석되어 복원되었습니다.")
+                except Exception as e:
+                    print(f"[WARNING] 세션 파일 정보 복원 중 오류: {e}")
+                    traceback.print_exc()
+            
+            # 기존 채팅 화면으로 리다이렉트
+            return jsonify({
+                'status': '분석 완료', 
+                'progress': 100,
+                'session_id': session_id,
+                'message': '이미 분석된 레포지토리입니다. 기존 채팅 화면으로 이동합니다.'
+            })
         
         # 분석 진행 상황을 위한 응답 헤더 설정
         def generate_progress():
             # 초기 진행 상태 - 0%
-            yield json.dumps({'status': '분석 시작', 'progress': 0}) + '\n'
+            yield json.dumps({'status': '분석 시작', 'progress': 0, 'session_id': session_id}) + '\n'
             time.sleep(0.5)  # 상태 변경 사이에 약간의 지연 추가
             
             # 저장소 정보 수집 - 5%
-            yield json.dumps({'status': '저장소 정보 수집 중...', 'progress': 5}) + '\n'
+            yield json.dumps({'status': '저장소 정보 수집 중...', 'progress': 5, 'session_id': session_id}) + '\n'
             time.sleep(0.5)
             
             try:
                 # 저장소 클론 시작 - 10%
-                yield json.dumps({'status': '저장소 클론 중...', 'progress': 10}) + '\n'
+                yield json.dumps({'status': '저장소 클론 중...', 'progress': 10, 'session_id': session_id}) + '\n'
                 time.sleep(0.5)
                 
                 # 저장소 클론 진행 - 15%
-                yield json.dumps({'status': '저장소 파일 다운로드 중...', 'progress': 15}) + '\n'
+                yield json.dumps({'status': '저장소 파일 다운로드 중...', 'progress': 15, 'session_id': session_id}) + '\n'
                 
                 print(f"[DEBUG] analyze_repository 호출 시작 (repo_url: {repo_url}, session_id: {session_id})")
                 try:
                     # 저장소 클론 완료 - 20%
-                    yield json.dumps({'status': '저장소 클론 완료', 'progress': 20}) + '\n'
+                    yield json.dumps({'status': '저장소 클론 완료', 'progress': 20, 'session_id': session_id}) + '\n'
                     time.sleep(0.5)
                     
                     # 파일 구조 분석 - 25%
-                    yield json.dumps({'status': '파일 구조 분석 중...', 'progress': 25}) + '\n'
+                    yield json.dumps({'status': '파일 구조 분석 중...', 'progress': 25, 'session_id': session_id}) + '\n'
                     time.sleep(0.5)
                     
                     # 코드 분석 시작 - 30%
-                    yield json.dumps({'status': '코드 분석 시작...', 'progress': 30}) + '\n'
+                    yield json.dumps({'status': '코드 분석 시작...', 'progress': 30, 'session_id': session_id}) + '\n'
                     
                     result = analyze_repository(repo_url, token, session_id)
                     print(f"[DEBUG] analyze_repository 결과: {list(result.keys())}")
                     
                     # 코드 분석 진행 - 40%
-                    yield json.dumps({'status': '코드 청크 생성 중...', 'progress': 40}) + '\n'
+                    yield json.dumps({'status': '코드 청크 생성 중...', 'progress': 40, 'session_id': session_id}) + '\n'
                     time.sleep(0.5)
                     
                     if 'files' not in result or 'directory_structure' not in result:
@@ -368,22 +547,23 @@ def analyze():
                     directory_structure = result['directory_structure']
                     
                     # 임베딩 생성 - 50%
-                    yield json.dumps({'status': '임베딩 생성 중...', 'progress': 50}) + '\n'
+                    yield json.dumps({'status': '임베딩 생성 중...', 'progress': 50, 'session_id': session_id}) + '\n'
                     time.sleep(0.5)
                     
                     print(f"[DEBUG] 분석된 파일 수: {len(files)}")
                     print(f"[DEBUG] 디렉토리 구조 길이: {len(directory_structure) if directory_structure else 0}")
                     
                     # 파일 분석 완료 - 60%
-                    yield json.dumps({'status': '파일 분석 완료', 'progress': 60}) + '\n'
+                    yield json.dumps({'status': '파일 분석 완료', 'progress': 60, 'session_id': session_id}) + '\n'
                 except Exception as e:
                     print(f"[ERROR] analyze_repository 호출 중 오류: {e}")
                     traceback.print_exc()
+                    yield json.dumps({'status': '에러', 'error': str(e), 'progress': -1, 'session_id': session_id}) + '\n'
                     raise e
                 
                 # 디렉토리 구조 정보 로그 추가
                 # 디렉토리 구조 생성 - 65%
-                yield json.dumps({'status': '디렉토리 구조 생성 중...', 'progress': 65}) + '\n'
+                yield json.dumps({'status': '디렉토리 구조 생성 중...', 'progress': 65, 'session_id': session_id}) + '\n'
                 time.sleep(0.5)
                 
                 if directory_structure:
@@ -392,17 +572,17 @@ def analyze():
                     print("[DEBUG] 디렉토리 구조 전체:\n" + directory_structure)
                     
                     # 디렉토리 구조 생성 완료 - 70%
-                    yield json.dumps({'status': '디렉토리 구조 생성 완료', 'progress': 70}) + '\n'
+                    yield json.dumps({'status': '디렉토리 구조 생성 완료', 'progress': 70, 'session_id': session_id}) + '\n'
                 else:
                     print("[DEBUG] 디렉토리 구조 정보가 생성되지 않았습니다.")
-                    yield json.dumps({'status': '디렉토리 구조 생성 실패', 'progress': 70}) + '\n'
+                    yield json.dumps({'status': '디렉토리 구조 생성 실패', 'progress': 70, 'session_id': session_id}) + '\n'
                 
                 # 세션 데이터 준비 - 75%
-                yield json.dumps({'status': '세션 데이터 준비 중...', 'progress': 75}) + '\n'
+                yield json.dumps({'status': '세션 데이터 준비 중...', 'progress': 75, 'session_id': session_id}) + '\n'
                 time.sleep(0.5)
                 
                 # 세션 데이터 저장 - 80%
-                yield json.dumps({'status': '세션 데이터 저장 중...', 'progress': 80}) + '\n'
+                yield json.dumps({'status': '세션 데이터 저장 중...', 'progress': 80, 'session_id': session_id}) + '\n'
                 
                 # 세션 데이터를 메모리와 데이터베이스에 저장
                 sessions[session_id] = {
@@ -419,11 +599,11 @@ def analyze():
                 db.create_session(session_id, user_id, repo_url, token)
                 
                 # 세션 데이터 저장 완료 - 90%
-                yield json.dumps({'status': '세션 데이터 저장 완료', 'progress': 90}) + '\n'
+                yield json.dumps({'status': '세션 데이터 저장 완료', 'progress': 90, 'session_id': session_id}) + '\n'
                 time.sleep(0.5)
                 
                 # 최종 처리 - 95%
-                yield json.dumps({'status': '최종 처리 중...', 'progress': 95}) + '\n'
+                yield json.dumps({'status': '최종 처리 중...', 'progress': 95, 'session_id': session_id}) + '\n'
                 time.sleep(0.5)
                 
                 # 분석 완료 - 100%
@@ -437,7 +617,7 @@ def analyze():
             except Exception as e:
                 error_msg = str(e)
                 print(f"[ERROR] 저장소 분석 중 오류 발생: {error_msg}")
-                yield json.dumps({'status': '에러', 'error': error_msg, 'progress': -1}) + '\n'
+                yield json.dumps({'status': '에러', 'error': error_msg, 'progress': -1, 'session_id': session_id}) + '\n'
         
         return Response(generate_progress(), mimetype='application/x-ndjson')
     except Exception as e:
@@ -458,7 +638,8 @@ def chat_api():
         if not session_id or not message:
             return jsonify({'error': '세션ID와 질문을 모두 입력하세요.'}), 400
         try:
-            result = handle_chat(session_id, message)
+            import chat_handler
+            result = chat_handler.handle_chat(session_id, message)
             return jsonify(result)
         except Exception as e:
             msg = str(e)
@@ -469,11 +650,28 @@ def chat_api():
             elif 'context length' in msg:
                 return jsonify({'error': '질문 또는 코드가 너무 깁니다. 질문을 더 짧게 입력해 주세요.'}), 400
             else:
-                return jsonify({'error': f'답변 생성 중 오류: {msg}'}), 400
+                return jsonify({'error': f'챗봇 응답 오류: {msg}'}), 500
     except Exception as e:
-        print("[챗봇 알 수 없는 에러]", str(e))
-        traceback.print_exc()
-        return jsonify({'error': f'알 수 없는 오류: {str(e)}'}), 500
+        return jsonify({'error': f'서버 오류: {str(e)}'}), 500
+
+@app.route('/get_chat_history', methods=['GET'])
+def get_chat_history():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    session_id = request.args.get('session_id')
+    
+    if not session_id:
+        return jsonify({'status': '에러', 'error': '세션 ID가 필요합니다.'}), 400
+    
+    # DB에서 채팅 기록 가져오기
+    chat_history = db.get_chat_history(session_id)
+    
+    return jsonify({
+        'status': '성공',
+        'chat_history': chat_history
+    })
 
 @app.route('/modify_request', methods=['POST'])
 def modify_request():
@@ -679,6 +877,112 @@ def profile():
         return redirect(url_for('index'))
     
     return render_template('profile.html', user=user)
+
+@app.route('/rename-chat-session', methods=['POST'])
+def rename_chat_session():
+    """채팅 세션 이름 변경 API"""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    data = request.get_json()
+    session_id = data.get('session_id')
+    new_name = data.get('new_name')
+    
+    if not session_id or not new_name:
+        return jsonify({'status': '에러', 'error': '세션 ID와 새 이름이 필요합니다.'}), 400
+    
+    # 세션 정보 조회
+    session_info = db.get_session_by_id(session_id)
+    if not session_info:
+        return jsonify({'status': '에러', 'error': '해당 세션을 찾을 수 없습니다.'}), 404
+    
+    # 현재 사용자의 세션인지 확인
+    if session_info['user_id'] != session.get('user_id'):
+        return jsonify({'status': '에러', 'error': '권한이 없습니다.'}), 403
+    
+    # 세션 이름 업데이트
+    success = db.update_session_name(session_id, new_name)
+    if success:
+        return jsonify({'status': '성공', 'message': '세션 이름이 변경되었습니다.'})
+    else:
+        return jsonify({'status': '에러', 'error': '세션 이름 변경 실패'}), 500
+
+@app.route('/reorder-chat-session', methods=['POST'])
+def reorder_chat_session():
+    """채팅 세션 순서 변경 API"""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    data = request.get_json()
+    session_id = data.get('session_id')
+    target_position = data.get('target_position')  # 'up' 또는 'down'
+    reference_session_id = data.get('reference_session_id')
+    
+    if not session_id or not target_position or not reference_session_id:
+        return jsonify({'status': '에러', 'error': '필수 파라미터가 누락되었습니다.'}), 400
+    
+    # 세션 정보 조회
+    session_info = db.get_session_by_id(session_id)
+    if not session_info:
+        return jsonify({'status': '에러', 'error': '해당 세션을 찾을 수 없습니다.'}), 404
+    
+    # 현재 사용자의 세션인지 확인
+    if session_info['user_id'] != session.get('user_id'):
+        return jsonify({'status': '에러', 'error': '권한이 없습니다.'}), 403
+    
+    # 세션 순서 업데이트
+    success = db.update_session_order(session_id, reference_session_id, target_position)
+    if success:
+        return jsonify({'status': '성공', 'message': '세션 순서가 변경되었습니다.'})
+    else:
+        return jsonify({'status': '에러', 'error': '세션 순서 변경 실패'}), 500
+
+@app.route('/delete-chat-session', methods=['POST'])
+def delete_chat_session():
+    """채팅 세션 삭제 API"""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    data = request.get_json()
+    session_id = data.get('session_id')
+    
+    if not session_id:
+        return jsonify({'status': '에러', 'error': '세션 ID가 필요합니다.'}), 400
+    
+    # 세션 정보 조회
+    session_info = db.get_session_by_id(session_id)
+    if not session_info:
+        return jsonify({'status': '에러', 'error': '해당 세션을 찾을 수 없습니다.'}), 404
+    
+    # 현재 사용자의 세션인지 확인
+    if session_info['user_id'] != session.get('user_id'):
+        return jsonify({'status': '에러', 'error': '권한이 없습니다.'}), 403
+    
+    # 레포지토리 정보 저장
+    repo_url = session_info['repo_url']
+    user_id = session.get('user_id')
+    
+    # 세션 삭제
+    success = db.delete_session(session_id)
+    if not success:
+        return jsonify({'status': '에러', 'error': '세션 삭제 실패'}), 500
+    
+    # 같은 레포의 다른 세션 찾기
+    remaining_sessions = db.get_all_chat_sessions(user_id, repo_url)
+    next_session_id = remaining_sessions[0]['session_id'] if remaining_sessions else None
+    
+    # 세션 데이터에서도 삭제
+    if session_id in sessions:
+        del sessions[session_id]
+    
+    return jsonify({
+        'status': '성공', 
+        'message': '세션이 삭제되었습니다.',
+        'next_session_id': next_session_id
+    })
 
 if __name__ == '__main__':
     app.run(debug=False) 
