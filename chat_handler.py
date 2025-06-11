@@ -7,6 +7,7 @@ from git_modifier import create_branch_and_commit
 import re
 import tiktoken
 from chat_memory import save_conversation, get_relevant_conversations
+import db  # DB 모듈 임포트 추가
 
 # OpenAI 토큰 계산용 tokenizer 초기화
 enc = tiktoken.get_encoding("cl100k_base")
@@ -184,7 +185,62 @@ def handle_chat(session_id, message):
     session_data = sessions.get(session_id, {})
     repo_path = f"./repos/{session_id}"
     
-    # 세션 데이터가 없으면 오류 반환
+    # 세션 데이터가 없으면 메모리에 복원 시도
+    if not session_data:
+        print(f"[WARNING] 메모리에 세션 {session_id} 데이터가 없습니다. 복원을 시도합니다.")
+        
+        # DB에서 세션 정보 조회
+        try:
+            import db
+            import os
+            from github_analyzer import GitHubAnalyzer
+            
+            # DB에서 세션 정보 조회
+            db_conn = db.get_db_connection()
+            if db_conn:
+                try:
+                    with db_conn.cursor() as cursor:
+                        cursor.execute("SELECT * FROM sessions WHERE session_id = %s", (session_id,))
+                        db_session = cursor.fetchone()
+                finally:
+                    db_conn.close()
+                
+                if db_session:
+                    print(f"[DEBUG] DB에서 세션 정보를 찾았습니다: {db_session}")
+                    repo_url = db_session.get('repo_url')
+                    token = db_session.get('token')
+                    
+                    # 세션 데이터 메모리에 복원
+                    sessions[session_id] = {
+                        'repo_url': repo_url,
+                        'token': token
+                    }
+                    
+                    # 저장소 파일 정보 복원
+                    try:
+                        analyzer = GitHubAnalyzer(repo_url, token, session_id)
+                        if os.path.exists(analyzer.repo_path):
+                            print(f"[DEBUG] 기존 저장소 경로 확인: {analyzer.repo_path}")
+                            if analyzer.load_repo_data():
+                                sessions[session_id]['files'] = analyzer.files
+                                sessions[session_id]['directory_structure'] = analyzer.get_directory_structure()
+                                # 메모리에 세션 데이터 저장
+                                from app import save_sessions
+                                save_sessions(sessions)
+                                print(f"[DEBUG] 세션 데이터 복원 성공")
+                                
+                                # 복원된 세션 데이터 가져오기
+                                session_data = sessions.get(session_id, {})
+                    except Exception as e:
+                        import traceback
+                        print(f"[ERROR] 세션 데이터 복원 중 오류: {e}")
+                        traceback.print_exc()
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] 세션 메타데이터 조회 오류: {e}")
+            traceback.print_exc()
+    
+    # 세션 데이터가 여전히 없으면 오류 반환
     if not session_data:
         return {
             'answer': "세션 데이터가 없습니다. 새로운 레포지토리를 분석해주세요.",
@@ -669,8 +725,21 @@ def handle_chat(session_id, message):
             qa_hash = hash(message + answer) % 10000
             print(f"[CHAT_HANDLER] 저장할 QA 삼합수: {qa_hash}")
             
+            # 기존 메모리 기반 저장 방식 (호환성 유지)
             save_conversation(session_id, message, answer)
             print(f"[CHAT_HANDLER] 대화 기록 저장 성공: session_id={session_id}")
+            
+            # DB에 채팅 기록 저장
+            try:
+                # db 모듈 임포트
+                import db
+                # 사용자 질문 저장
+                db.add_chat_history(session_id, 'user', message)
+                # AI 응답 저장
+                db.add_chat_history(session_id, 'assistant', answer)
+                print(f"[CHAT_HANDLER] DB에 대화 기록 저장 성공: session_id={session_id}")
+            except Exception as e:
+                print(f"[CHAT_HANDLER] DB에 대화 기록 저장 실패: {str(e)}")
         except Exception as e:
             import traceback
             print(f"[CHAT_HANDLER] 대화 기록 저장 실패: {str(e)}")
