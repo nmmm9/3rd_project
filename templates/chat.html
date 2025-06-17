@@ -259,6 +259,35 @@
             max-height: 400px;
             overflow-y: auto;
         }
+        
+        /* 파일 탐색기 토글 애니메이션 */
+        #file-explorer {
+            transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+        }
+        
+        #show-file-explorer {
+            transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+        }
+        
+        #show-file-explorer-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+        }
+        
+        /* 파일 탐색기 숨김 상태 개선 */
+        #show-file-explorer .material-icons {
+            font-size: 20px;
+        }
+        
+        /* 세로 텍스트 스타일 개선 */
+        .writing-mode-vertical {
+            line-height: 1.2;
+        }
+        
+        .writing-mode-vertical div {
+            margin-bottom: 2px;
+            font-weight: 500;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -344,36 +373,117 @@
     </div>
   </div>
 
-  <!-- 오른쪽 메인 채팅 영역 -->
-  <div class="flex-1 flex flex-col">
-    <!-- 채팅 메시지 표시 영역 -->
-    <div id="chat-box" class="flex-1 p-6 overflow-y-auto bg-gray-900" style="min-height:calc(100vh - 150px);">
-      <!-- 채팅 메시지가 여기에 표시됩니다 -->
-      <div class="msg-ai mb-6">
-        <div>
-          <p>안녕하세요! GitHub 저장소의 코드에 대해 질문하거나 코드 수정을 요청해보세요. 언제든지 도와드리겠습니다! 파일 구조, 함수의 목적, 버그 해결 방법 등 어떤 질문이든 가능합니다.</p>
-        </div>
+  <!-- 중간 파일 탐색 사이드바 -->
+  <div id="file-explorer" class="bg-gray-800 w-80 border-r border-gray-700 flex-shrink-0 flex flex-col">
+    <!-- 브랜치 선택 -->
+    <div class="p-3 border-b border-gray-700">
+      <div class="text-sm font-semibold text-white mb-2">브랜치 선택</div>
+      <select id="branch-selector" class="w-full bg-gray-700 border border-gray-600 text-gray-200 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="">브랜치를 선택하세요...</option>
+      </select>
+    </div>
+    
+    <!-- 파일 트리 -->
+    <div class="flex-1 overflow-y-auto">
+      <div class="p-3 border-b border-gray-700">
+        <div class="text-sm font-semibold text-white mb-2">파일 구조</div>
+        <div id="file-tree-loading" class="text-xs text-gray-400 hidden">파일 구조를 불러오는 중...</div>
+      </div>
+      <div id="file-tree" class="p-2">
+        <div class="text-xs text-gray-500 italic p-2">브랜치를 선택하면 파일 구조가 표시됩니다</div>
       </div>
     </div>
     
-    <!-- 코드 미리보기 영역 -->
-    <div id="code-preview" class="bg-gray-800 border-t border-gray-700 p-4 overflow-y-auto" style="max-height:40vh; display:none;">
+    <!-- 파일 탐색기 토글 버튼 -->
+    <div class="p-2 border-t border-gray-700">
+      <button id="toggle-file-explorer" class="w-full bg-gray-600 hover:bg-gray-700 text-white py-2 px-3 rounded-md text-sm transition-colors duration-200">
+        <span class="material-icons text-sm mr-1">visibility_off</span>파일 탐색기 숨기기
+      </button>
+    </div>
+  </div>
+
+  <!-- 파일 탐색기 토글 버튼 (숨겨진 상태에서 보이는 버튼) -->
+  <div id="show-file-explorer" class="bg-gray-800 border-r border-gray-600 w-16 flex-shrink-0 flex flex-col items-center justify-center py-4" style="display: none;">
+    <button id="show-file-explorer-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-lg transition-all duration-200 shadow-lg mb-3" title="파일 탐색기 보이기">
+      <span class="material-icons text-lg">folder_open</span>
+    </button>
+    <div class="text-xs text-gray-400 writing-mode-vertical text-center">
+      <div>파</div>
+      <div>일</div>
+      <div>탐</div>
+      <div>색</div>
+      <div>기</div>
+    </div>
+  </div>
+
+  <!-- 오른쪽 메인 채팅 영역 -->
+  <div class="flex-1 flex flex-col">
+    <!-- 선택된 파일 컨텍스트 표시 영역 -->
+    <div id="selected-files-context" class="bg-gray-700 border-b border-gray-600 p-3" style="display: none;">
       <div class="flex justify-between items-center mb-2">
-        <h3 class="text-white font-medium"></h3>
-        <button id="close-preview" class="text-gray-400 hover:text-white">
+        <div class="text-sm font-semibold text-white">선택된 파일 (질문 컨텍스트)</div>
+        <button id="clear-selected-files" class="text-gray-400 hover:text-white text-sm">
+          <span class="material-icons text-sm">clear_all</span> 모두 제거
+        </button>
+      </div>
+      <div id="selected-files-list" class="flex flex-wrap gap-2"></div>
+    </div>
+
+  <!-- 채팅 메시지 표시 영역 -->
+  <div id="chat-box" class="flex-1 p-6 overflow-y-auto bg-gray-900" style="min-height:calc(100vh - 150px);">
+    <!-- 채팅 메시지가 여기에 표시됩니다 -->
+    <div class="msg-ai mb-6">
+      <div>
+        <p>안녕하세요! GitHub 저장소의 코드에 대해 질문하거나 코드 수정을 요청해보세요. 언제든지 도와드리겠습니다! 파일 구조, 함수의 목적, 버그 해결 방법 등 어떤 질문이든 가능합니다.</p>
+          <p class="mt-2 text-sm text-gray-400">💡 왼쪽 파일 탐색기에서 브랜치를 선택하고 파일을 클릭하여 내용을 확인할 수 있습니다.</p>
+          <p class="mt-2 text-sm text-blue-400">🔍 파일을 우클릭하여 질문 컨텍스트에 추가할 수 있습니다.</p>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 코드 미리보기 영역 -->
+  <div id="code-preview" class="bg-gray-800 border-t border-gray-700 p-4 overflow-y-auto" style="max-height:40vh; display:none;">
+    <div class="flex justify-between items-center mb-2">
+      <h3 class="text-white font-medium"></h3>
+        <div class="flex gap-2">
+          <button id="fullscreen-preview" class="text-gray-400 hover:text-white" title="전체 화면으로 보기">
+            <span class="material-icons">fullscreen</span>
+          </button>
+      <button id="close-preview" class="text-gray-400 hover:text-white">
+        <span class="material-icons">close</span>
+      </button>
+        </div>
+    </div>
+    <div id="code-preview-content"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 전체 화면 코드 뷰어 모달 -->
+<div id="fullscreen-modal" class="fixed inset-0 bg-black bg-opacity-75 z-50 hidden">
+  <div class="flex flex-col h-full">
+    <div class="bg-gray-800 p-4 flex justify-between items-center border-b border-gray-600">
+      <h2 id="fullscreen-title" class="text-white font-medium text-lg"></h2>
+      <div class="flex gap-2">
+        <button id="add-to-context-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm">
+          <span class="material-icons text-sm mr-1">add</span>컨텍스트에 추가
+        </button>
+        <button id="close-fullscreen" class="text-gray-400 hover:text-white">
           <span class="material-icons">close</span>
         </button>
       </div>
-      <div id="code-preview-content"></div>
     </div>
-    
-    <!-- 입력 폼 영역 -->
-    <div class="bg-gray-800 border-t border-gray-700 p-4">
-      <form id="chat-form" class="flex gap-2">
-        <input type="text" class="flex-1 bg-gray-700 border border-gray-600 text-gray-200 rounded-md py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" id="user-input" placeholder="질문 또는 코드 수정 요청 입력..." autocomplete="off" required>
-        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-md transition-all duration-200">전송</button>
-      </form>
-    </div>
+    <div id="fullscreen-content" class="flex-1 overflow-auto bg-gray-900 p-4"></div>
+  </div>
+  </div>
+  
+  <!-- 입력 폼 영역 -->
+  <div class="bg-gray-800 border-t border-gray-700 p-4">
+    <form id="chat-form" class="flex gap-2">
+      <input type="text" class="flex-1 bg-gray-700 border border-gray-600 text-gray-200 rounded-md py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500" id="user-input" placeholder="질문 또는 코드 수정 요청 입력..." autocomplete="off" required>
+      <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-md transition-all duration-200">전송</button>
+    </form>
+  </div>
   </div>
 </div>
 </div>
@@ -561,8 +671,29 @@ document.getElementById('chat-form').onsubmit = async function(e) {
     e.preventDefault();
     const input = document.getElementById('user-input');
     const userMsg = input.value;
-    chatBox.innerHTML += `<div class="msg-user flex justify-end mb-2"><div class="bg-gray-700 text-white rounded-2xl rounded-br-none px-5 py-3 max-w-[70%] font-medium shadow"> <b class="text-yellow-300">나:</b> ${userMsg}</div></div>`;
+    
+    // 선택된 파일 컨텍스트 정보 먼저 생성
+    let contextInfo = '';
+    if (selectedFiles.length > 0) {
+        contextInfo = selectedFiles.map(file => file.path).join(', ');
+    }
+    
+    // 사용자 메시지 추가 (컨텍스트 정보 포함)
+    let userMessageHtml = `<div class="msg-user flex justify-end mb-2"><div class="bg-gray-700 text-white rounded-2xl rounded-br-none px-5 py-3 max-w-[70%] font-medium shadow"> <b class="text-yellow-300">나:</b> ${escapeHtml(userMsg)}`;
+    
+    if (contextInfo) {
+        userMessageHtml += `<div class="mt-2 pt-2 border-t border-gray-600 text-xs text-gray-300"><span class="material-icons text-xs mr-1">description</span>선택된 파일: ${escapeHtml(contextInfo)}</div>`;
+    }
+    
+    userMessageHtml += `</div></div>`;
+    chatBox.innerHTML += userMessageHtml;
     input.value = '';
+    
+    // 질문 후 컨텍스트 초기화
+    if (selectedFiles.length > 0) {
+        selectedFiles = [];
+        updateSelectedFilesDisplay();
+    }
     
     // AI 응답 로딩 애니메이션 추가
     const loadingId = 'loading-' + Date.now();
@@ -584,12 +715,22 @@ document.getElementById('chat-form').onsubmit = async function(e) {
     
     let url = '/chat';
     if (isModifyRequest(userMsg)) url = '/modify_request';
+    // 선택된 파일 컨텍스트 포함하여 메시지 구성
+    let messageWithContext = userMsg;
+    if (selectedFiles.length > 0) {
+        messageWithContext += '\n\n[선택된 파일 컨텍스트]\n';
+        selectedFiles.forEach(file => {
+            messageWithContext += `\n--- ${file.path} (브랜치: ${file.branch}) ---\n`;
+            messageWithContext += file.content + '\n';
+        });
+    }
+    
     const res = await fetch(url, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             session_id: '{{ session_id }}',
-            message: userMsg
+            message: messageWithContext
         })
     });
     const data = await res.json();
@@ -858,14 +999,55 @@ window.addEventListener('load', async function() {
                 chatBox.innerHTML += `<div class="msg-ai mb-6">
                     <div>
                         <p>안녕하세요! GitHub 저장소의 코드에 대해 질문하거나 코드 수정을 요청해보세요. 언제든지 도와드리겠습니다! 파일 구조, 함수의 목적, 버그 해결 방법 등 어떤 질문이든 가능합니다.</p>
-                    </div>
+  </div>
                 </div>`;
             } else {
                 result.chat_history.forEach(msg => {
                     try {
                         if (msg.role === 'user') {
-                            // 사용자 메시지
-                            chatBox.innerHTML += `<div class="msg-user flex justify-end mb-2"><div class="bg-gray-700 text-white rounded-2xl rounded-br-none px-5 py-3 max-w-[70%] font-medium shadow"> <b class="text-yellow-300">나:</b> ${msg.content}</div></div>`;
+                            // 사용자 메시지 - 컨텍스트 정보 분리 처리
+                            let userMessage = msg.content;
+                            let contextInfo = '';
+                            
+
+                            
+                            // 컨텍스트 정보 추출 및 처리
+                            if (userMessage.includes('[선택된 파일 컨텍스트]')) {
+                                // 컨텍스트 분리
+                                const parts = userMessage.split('\n\n[선택된 파일 컨텍스트]\n');
+                                if (parts.length > 1) {
+                                    userMessage = parts[0];  // 질문 부분만
+                                    const contextPart = parts[1];
+                                    
+                                    // "--- 파일명 (브랜치: 브랜치명) ---" 패턴에서 파일명만 추출
+                                    const fileMatches = contextPart.match(/--- (.+?) \(브랜치: .+?\) ---/g);
+                                    if (fileMatches) {
+                                        const fileNames = fileMatches.map(match => {
+                                            const fileName = match.match(/--- (.+?) \(브랜치:/)[1];
+                                            return fileName.trim();
+                                        }).filter(file => file);
+                                        contextInfo = fileNames.join(', ');
+                                    }
+                                }
+                            }
+                            // "[선택된 파일: 파일명]" 패턴 처리 (백엔드에서 저장된 형식)
+                            else if (userMessage.includes('[선택된 파일:')) {
+                                const contextMatch = userMessage.match(/\[선택된 파일:\s*([^\]]+)\]/);
+                                if (contextMatch) {
+                                    contextInfo = contextMatch[1].trim();
+                                    // 메시지에서 컨텍스트 정보 제거
+                                    userMessage = userMessage.replace(/\n*\[선택된 파일:[^\]]+\]/g, '').trim();
+                                }
+                            }
+                            
+                            let userMessageHtml = `<div class="msg-user flex justify-end mb-2"><div class="bg-gray-700 text-white rounded-2xl rounded-br-none px-5 py-3 max-w-[70%] font-medium shadow"> <b class="text-yellow-300">나:</b> ${escapeHtml(userMessage)}`;
+                            
+                            if (contextInfo) {
+                                userMessageHtml += `<div class="mt-2 pt-2 border-t border-gray-600 text-xs text-gray-300"><span class="material-icons text-xs mr-1">description</span>선택된 파일: ${escapeHtml(contextInfo)}</div>`;
+                            }
+                            
+                            userMessageHtml += `</div></div>`;
+                            chatBox.innerHTML += userMessageHtml;
                         } else if (msg.role === 'assistant') {
                             // AI 응답 처리 개선 - 에러 방지를 위한 try-catch 추가
                             try {
@@ -1074,7 +1256,511 @@ window.addEventListener('load', async function() {
             }
         }
     });
+
+    // 브랜치 및 파일 탐색 기능 초기화
+    initFileExplorer();
 });
+
+// 선택된 파일들을 저장하는 전역 변수
+let selectedFiles = [];
+
+// 파일 탐색기 초기화 함수
+async function initFileExplorer() {
+    const sessionId = '{{ session_id }}';
+    const branchSelector = document.getElementById('branch-selector');
+    const fileTree = document.getElementById('file-tree');
+    const fileTreeLoading = document.getElementById('file-tree-loading');
+    const toggleButton = document.getElementById('toggle-file-explorer');
+    const showButton = document.getElementById('show-file-explorer-btn');
+    const fileExplorer = document.getElementById('file-explorer');
+    const showFileExplorer = document.getElementById('show-file-explorer');
+    
+    // 파일 탐색기 숨기기 기능
+    toggleButton.addEventListener('click', function() {
+        fileExplorer.style.transition = 'transform 0.3s ease-in-out, opacity 0.3s ease-in-out';
+        fileExplorer.style.transform = 'translateX(-100%)';
+        fileExplorer.style.opacity = '0';
+        
+        setTimeout(() => {
+            fileExplorer.style.display = 'none';
+            showFileExplorer.style.display = 'flex';
+            showFileExplorer.style.opacity = '0';
+            showFileExplorer.style.transform = 'translateX(-20px)';
+            
+            // 애니메이션으로 나타나기
+            setTimeout(() => {
+                showFileExplorer.style.transition = 'transform 0.3s ease-out, opacity 0.3s ease-out';
+                showFileExplorer.style.transform = 'translateX(0)';
+                showFileExplorer.style.opacity = '1';
+            }, 50);
+        }, 300);
+    });
+    
+    // 파일 탐색기 보이기 기능
+    showButton.addEventListener('click', function() {
+        showFileExplorer.style.transition = 'transform 0.3s ease-in-out, opacity 0.3s ease-in-out';
+        showFileExplorer.style.transform = 'translateX(-20px)';
+        showFileExplorer.style.opacity = '0';
+        
+        setTimeout(() => {
+            showFileExplorer.style.display = 'none';
+            fileExplorer.style.display = 'flex';
+            fileExplorer.style.opacity = '0';
+            fileExplorer.style.transform = 'translateX(-100%)';
+            
+            // 애니메이션으로 나타나기
+            setTimeout(() => {
+                fileExplorer.style.transition = 'transform 0.3s ease-out, opacity 0.3s ease-out';
+                fileExplorer.style.transform = 'translateX(0)';
+                fileExplorer.style.opacity = '1';
+            }, 50);
+        }, 300);
+    });
+    
+    // 선택된 파일 컨텍스트 관리
+    initSelectedFilesContext();
+    
+    // 브랜치 목록 로드
+    try {
+        const response = await fetch(`/api/branches/${sessionId}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            branchSelector.innerHTML = '<option value="">브랜치를 선택하세요...</option>';
+            result.branches.forEach(branch => {
+                const option = document.createElement('option');
+                option.value = branch.name;
+                option.textContent = branch.name;
+                branchSelector.appendChild(option);
+            });
+            
+            // 기본 브랜치 선택 (main 또는 master)
+            const defaultBranch = result.branches.find(b => b.name === 'main') || 
+                                result.branches.find(b => b.name === 'master') || 
+                                result.branches[0];
+            if (defaultBranch) {
+                branchSelector.value = defaultBranch.name;
+                loadFileTree(sessionId, defaultBranch.name);
+            }
+        } else {
+            console.error('브랜치 목록 로드 실패:', result.error);
+            branchSelector.innerHTML = '<option value="">브랜치 로드 실패</option>';
+        }
+    } catch (error) {
+        console.error('브랜치 목록 로드 오류:', error);
+        branchSelector.innerHTML = '<option value="">브랜치 로드 오류</option>';
+    }
+    
+    // 브랜치 선택 이벤트
+    branchSelector.addEventListener('change', function() {
+        const selectedBranch = this.value;
+        if (selectedBranch) {
+            loadFileTree(sessionId, selectedBranch);
+        } else {
+            fileTree.innerHTML = '<div class="text-xs text-gray-500 italic p-2">브랜치를 선택하면 파일 구조가 표시됩니다</div>';
+        }
+    });
+}
+
+// 파일 트리 로드 함수
+async function loadFileTree(sessionId, branchName) {
+    const fileTree = document.getElementById('file-tree');
+    const fileTreeLoading = document.getElementById('file-tree-loading');
+    
+    fileTreeLoading.classList.remove('hidden');
+    fileTree.innerHTML = '';
+    
+    try {
+        const response = await fetch(`/api/files/${sessionId}/${branchName}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const treeStructure = buildFileTree(result.files, result.directories);
+            fileTree.innerHTML = treeStructure;
+            
+            // 파일 클릭 및 우클릭 이벤트 추가
+            fileTree.addEventListener('click', function(e) {
+                if (e.target.closest('.file-item')) {
+                    const fileItem = e.target.closest('.file-item');
+                    const filePath = fileItem.dataset.path;
+                    showFileContent(sessionId, branchName, filePath);
+                }
+            });
+            
+            // 파일 우클릭 컨텍스트 메뉴 이벤트
+            fileTree.addEventListener('contextmenu', function(e) {
+                if (e.target.closest('.file-item')) {
+                    e.preventDefault();
+                    const fileItem = e.target.closest('.file-item');
+                    const filePath = fileItem.dataset.path;
+                    addFileToContext(sessionId, branchName, filePath);
+                }
+            });
+        } else {
+            fileTree.innerHTML = `<div class="text-xs text-red-400 p-2">파일 구조 로드 실패: ${result.error}</div>`;
+        }
+    } catch (error) {
+        console.error('파일 트리 로드 오류:', error);
+        fileTree.innerHTML = '<div class="text-xs text-red-400 p-2">파일 구조 로드 오류</div>';
+    } finally {
+        fileTreeLoading.classList.add('hidden');
+    }
+}
+
+// 파일 트리 구조 생성 함수
+function buildFileTree(files, directories) {
+    const tree = {};
+    
+    // 디렉토리 구조 생성
+    directories.forEach(dir => {
+        const parts = dir.path.split('/');
+        let current = tree;
+        parts.forEach(part => {
+            if (!current[part]) {
+                current[part] = { type: 'directory', children: {} };
+            }
+            current = current[part].children;
+        });
+    });
+    
+    // 파일 추가
+    files.forEach(file => {
+        const parts = file.path.split('/');
+        const fileName = parts.pop();
+        let current = tree;
+        
+        // 디렉토리 경로 생성
+        parts.forEach(part => {
+            if (!current[part]) {
+                current[part] = { type: 'directory', children: {} };
+            }
+            current = current[part].children;
+        });
+        
+        // 파일 추가
+        current[fileName] = { type: 'file', path: file.path, size: file.size };
+    });
+    
+    return renderTree(tree);
+}
+
+// 트리 렌더링 함수
+function renderTree(tree, level = 0) {
+    let html = '';
+    const indent = '  '.repeat(level);
+    
+    Object.keys(tree).sort((a, b) => {
+        // 디렉토리를 먼저, 그 다음 파일
+        const aIsDir = tree[a].type === 'directory';
+        const bIsDir = tree[b].type === 'directory';
+        if (aIsDir && !bIsDir) return -1;
+        if (!aIsDir && bIsDir) return 1;
+        return a.localeCompare(b);
+    }).forEach(name => {
+        const item = tree[name];
+        
+        if (item.type === 'directory') {
+            html += `
+                <div class="directory-item" style="margin-left: ${level * 12}px;">
+                    <div class="flex items-center py-1 px-2 hover:bg-gray-700 rounded cursor-pointer text-xs" onclick="toggleDirectory(this)">
+                        <span class="material-icons text-xs mr-1">folder</span>
+                        <span class="text-blue-300">${name}</span>
+                        <span class="material-icons text-xs ml-auto">expand_more</span>
+</div>
+                    <div class="directory-content hidden">
+                        ${renderTree(item.children, level + 1)}
+</div>
+                </div>
+            `;
+        } else {
+            const fileIcon = getFileIcon(name);
+            const fileSize = formatFileSize(item.size);
+            html += `
+                <div class="file-item flex items-center py-1 px-2 hover:bg-gray-700 rounded cursor-pointer text-xs" 
+                     style="margin-left: ${level * 12}px;" data-path="${item.path}">
+                    <span class="material-icons text-xs mr-1">${fileIcon}</span>
+                    <span class="text-gray-300 flex-1">${name}</span>
+                    <span class="text-gray-500 text-xs ml-2">${fileSize}</span>
+                </div>
+            `;
+        }
+    });
+    
+    return html;
+}
+
+// 디렉토리 토글 함수
+function toggleDirectory(element) {
+    const content = element.nextElementSibling;
+    const icon = element.querySelector('.material-icons:last-child');
+    
+    if (content.classList.contains('hidden')) {
+        content.classList.remove('hidden');
+        icon.textContent = 'expand_less';
+    } else {
+        content.classList.add('hidden');
+        icon.textContent = 'expand_more';
+    }
+}
+
+// 파일 아이콘 반환 함수
+function getFileIcon(fileName) {
+    const ext = fileName.split('.').pop().toLowerCase();
+    const iconMap = {
+        'py': 'code',
+        'js': 'code',
+        'ts': 'code',
+        'html': 'web',
+        'css': 'style',
+        'md': 'description',
+        'txt': 'description',
+        'json': 'data_object',
+        'yml': 'settings',
+        'yaml': 'settings',
+        'xml': 'code',
+        'sql': 'storage',
+        'sh': 'terminal',
+        'bat': 'terminal',
+        'dockerfile': 'docker',
+        'gitignore': 'visibility_off',
+        'readme': 'info'
+    };
+    
+    return iconMap[ext] || 'insert_drive_file';
+}
+
+// 파일 크기 포맷 함수
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// 현재 표시 중인 파일 정보 저장
+let currentFileInfo = null;
+
+// 파일 내용 표시 함수
+async function showFileContent(sessionId, branchName, filePath) {
+    const codePreview = document.getElementById('code-preview');
+    const codePreviewContent = document.getElementById('code-preview-content');
+    const previewTitle = codePreview.querySelector('h3');
+    
+    // 미리보기 영역 표시
+    codePreview.style.display = 'block';
+    previewTitle.textContent = filePath;
+    codePreviewContent.innerHTML = '<div class="text-gray-400">파일 내용을 불러오는 중...</div>';
+    
+    try {
+        const response = await fetch(`/api/file-content/${sessionId}/${branchName}/${encodeURIComponent(filePath)}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const language = getLanguageFromPath(filePath);
+            const escapedContent = escapeHtml(result.content);
+            
+            // 현재 파일 정보 저장
+            currentFileInfo = {
+                sessionId,
+                branchName,
+                filePath,
+                content: result.content,
+                language
+            };
+            
+            codePreviewContent.innerHTML = `
+                <pre><code class="language-${language}">${escapedContent}</code></pre>
+            `;
+            
+            // 코드 하이라이팅 적용
+            const codeBlock = codePreviewContent.querySelector('code');
+            if (codeBlock) {
+                hljs.highlightElement(codeBlock);
+            }
+        } else {
+            codePreviewContent.innerHTML = `<div class="text-red-400">파일 내용 로드 실패: ${result.error}</div>`;
+            currentFileInfo = null;
+        }
+    } catch (error) {
+        console.error('파일 내용 로드 오류:', error);
+        codePreviewContent.innerHTML = '<div class="text-red-400">파일 내용 로드 오류</div>';
+        currentFileInfo = null;
+    }
+}
+
+// 파일 경로에서 언어 추출 함수
+function getLanguageFromPath(filePath) {
+    const ext = filePath.split('.').pop().toLowerCase();
+    const languageMap = {
+        'py': 'python',
+        'js': 'javascript',
+        'ts': 'typescript',
+        'html': 'html',
+        'css': 'css',
+        'md': 'markdown',
+        'json': 'json',
+        'yml': 'yaml',
+        'yaml': 'yaml',
+        'xml': 'xml',
+        'sql': 'sql',
+        'sh': 'bash',
+        'bat': 'batch'
+    };
+    
+    return languageMap[ext] || 'text';
+}
+
+// 코드 미리보기 관련 이벤트들
+document.getElementById('close-preview').addEventListener('click', function() {
+    document.getElementById('code-preview').style.display = 'none';
+});
+
+document.getElementById('fullscreen-preview').addEventListener('click', function() {
+    if (currentFileInfo) {
+        showFullscreenModal(currentFileInfo);
+    }
+});
+
+document.getElementById('close-fullscreen').addEventListener('click', function() {
+    document.getElementById('fullscreen-modal').classList.add('hidden');
+});
+
+document.getElementById('add-to-context-btn').addEventListener('click', function() {
+    if (currentFileInfo) {
+        addFileToContextFromModal(currentFileInfo);
+    }
+});
+
+// 전체 화면 모달 표시 함수
+function showFullscreenModal(fileInfo) {
+    const modal = document.getElementById('fullscreen-modal');
+    const title = document.getElementById('fullscreen-title');
+    const content = document.getElementById('fullscreen-content');
+    
+    title.textContent = fileInfo.filePath;
+    
+    const escapedContent = escapeHtml(fileInfo.content);
+    content.innerHTML = `
+        <pre><code class="language-${fileInfo.language}">${escapedContent}</code></pre>
+    `;
+    
+    // 코드 하이라이팅 적용
+    const codeBlock = content.querySelector('code');
+    if (codeBlock) {
+        hljs.highlightElement(codeBlock);
+    }
+    
+    modal.classList.remove('hidden');
+}
+
+// 모달에서 컨텍스트에 추가하는 함수
+function addFileToContextFromModal(fileInfo) {
+    // 이미 선택된 파일인지 확인
+    const existingFile = selectedFiles.find(f => f.path === fileInfo.filePath);
+    if (existingFile) {
+        showToast('이미 선택된 파일입니다.');
+        return;
+    }
+    
+    selectedFiles.push({
+        path: fileInfo.filePath,
+        content: fileInfo.content,
+        branch: fileInfo.branchName
+    });
+    updateSelectedFilesDisplay();
+    
+    // 성공 메시지
+    showToast(`파일 "${fileInfo.filePath}"이(가) 컨텍스트에 추가되었습니다.`);
+    
+    // 모달 닫기
+    document.getElementById('fullscreen-modal').classList.add('hidden');
+}
+
+// 선택된 파일 컨텍스트 관리 함수들
+function initSelectedFilesContext() {
+    const clearButton = document.getElementById('clear-selected-files');
+    
+    clearButton.addEventListener('click', function() {
+        selectedFiles = [];
+        updateSelectedFilesDisplay();
+    });
+}
+
+function addFileToContext(sessionId, branchName, filePath) {
+    // 이미 선택된 파일인지 확인
+    const existingFile = selectedFiles.find(f => f.path === filePath);
+    if (existingFile) {
+        alert('이미 선택된 파일입니다.');
+        return;
+    }
+    
+    // 파일 내용 가져오기
+    fetch(`/api/file-content/${sessionId}/${branchName}/${encodeURIComponent(filePath)}`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                selectedFiles.push({
+                    path: filePath,
+                    content: result.content,
+                    branch: branchName
+                });
+                updateSelectedFilesDisplay();
+                
+                // 성공 메시지
+                showToast(`파일 "${filePath}"이(가) 컨텍스트에 추가되었습니다.`);
+            } else {
+                alert(`파일 내용을 가져올 수 없습니다: ${result.error}`);
+            }
+        })
+        .catch(error => {
+            console.error('파일 내용 로드 오류:', error);
+            alert('파일 내용 로드 중 오류가 발생했습니다.');
+        });
+}
+
+function updateSelectedFilesDisplay() {
+    const contextDiv = document.getElementById('selected-files-context');
+    const filesList = document.getElementById('selected-files-list');
+    
+    if (selectedFiles.length === 0) {
+        contextDiv.style.display = 'none';
+        return;
+    }
+    
+    contextDiv.style.display = 'block';
+    filesList.innerHTML = '';
+    
+    selectedFiles.forEach((file, index) => {
+        const fileTag = document.createElement('div');
+        fileTag.className = 'bg-blue-600 text-white px-3 py-1 rounded-full text-xs flex items-center';
+        fileTag.innerHTML = `
+            <span class="material-icons text-xs mr-1">description</span>
+            <span>${file.path}</span>
+            <button class="ml-2 hover:bg-blue-700 rounded-full p-1" onclick="removeFileFromContext(${index})">
+                <span class="material-icons text-xs">close</span>
+            </button>
+        `;
+        filesList.appendChild(fileTag);
+    });
+}
+
+function removeFileFromContext(index) {
+    selectedFiles.splice(index, 1);
+    updateSelectedFilesDisplay();
+}
+
+function showToast(message) {
+    // 간단한 토스트 메시지 표시
+    const toast = document.createElement('div');
+    toast.className = 'fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-md shadow-lg z-50';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
 </script>
 </body>
 </html>

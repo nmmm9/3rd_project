@@ -119,6 +119,42 @@ def init_db():
                     else:
                         raise column_error
                 
+                # files_data 컬럼 추가 (분석된 파일 정보 저장)
+                try:
+                    cursor.execute("ALTER TABLE sessions ADD COLUMN files_data LONGTEXT")
+                    print("[INFO] sessions 테이블에 files_data 컬럼 추가됨")
+                except Exception as column_error:
+                    if "Duplicate column" in str(column_error):
+                        print("[INFO] files_data 컬럼이 이미 존재합니다.")
+                    else:
+                        raise column_error
+                
+                # directory_structure 컬럼 추가 (디렉토리 구조 저장)
+                try:
+                    cursor.execute("ALTER TABLE sessions ADD COLUMN directory_structure TEXT")
+                    print("[INFO] sessions 테이블에 directory_structure 컬럼 추가됨")
+                except Exception as column_error:
+                    if "Duplicate column" in str(column_error):
+                        print("[INFO] directory_structure 컬럼이 이미 존재합니다.")
+                    else:
+                        raise column_error
+                
+                # users 테이블의 password 컬럼을 password_hash로 변경 (기존 테이블 호환성)
+                try:
+                    # 먼저 password_hash 컬럼이 있는지 확인
+                    cursor.execute("SHOW COLUMNS FROM users LIKE 'password_hash'")
+                    if not cursor.fetchone():
+                        # password_hash 컬럼이 없으면 password 컬럼을 rename
+                        cursor.execute("ALTER TABLE users CHANGE COLUMN password password_hash VARCHAR(255)")
+                        print("[INFO] users 테이블의 password 컬럼을 password_hash로 변경됨")
+                    else:
+                        print("[INFO] password_hash 컬럼이 이미 존재합니다.")
+                except Exception as column_error:
+                    if "Unknown column" in str(column_error):
+                        print("[INFO] password 컬럼이 존재하지 않습니다. (정상)")
+                    else:
+                        print(f"[WARNING] password 컬럼 변경 중 오류: {column_error}")
+                
             except Exception as e:
                 print(f"[WARNING] 컬럼 추가 중 오류 발생: {e}")
                 print("[INFO] 오류가 발생했지만 계속 진행합니다. (컬럼이 이미 존재할 수 있음)")
@@ -144,7 +180,7 @@ def create_user(username, email, password=None, is_github_user=False, github_id=
         with conn.cursor() as cursor:
             sql = '''
             INSERT INTO users 
-            (username, email, password, is_github_user, github_id, github_username, github_token, github_avatar_url) 
+            (username, email, password_hash, is_github_user, github_id, github_username, github_token, github_avatar_url) 
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             '''
             cursor.execute(sql, (username, email, password, is_github_user, github_id, 
@@ -497,7 +533,7 @@ def delete_session(session_id):
             sql = "DELETE FROM chat_history WHERE session_id = %s"
             cursor.execute(sql, (session_id,))
             
-            # 세션 삭제
+                            # 세션 삭제
             sql = "DELETE FROM sessions WHERE session_id = %s"
             cursor.execute(sql, (session_id,))
         
@@ -506,6 +542,132 @@ def delete_session(session_id):
     except Exception as e:
         print(f"[ERROR] 세션 삭제 오류: {e}")
         return False
+    finally:
+        conn.close()
+
+def get_analyzed_repositories(user_id):
+    """사용자가 분석한 모든 레포지토리 목록을 가져오는 함수"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+            SELECT DISTINCT 
+                repo_url,
+                MAX(created_at) as last_analyzed,
+                (SELECT session_id FROM sessions s2 WHERE s2.user_id = %s AND s2.repo_url = s.repo_url ORDER BY s2.created_at DESC LIMIT 1) as latest_session_id
+            FROM sessions s
+            WHERE user_id = %s AND repo_url IS NOT NULL
+            GROUP BY repo_url
+            ORDER BY last_analyzed DESC
+            """
+            cursor.execute(sql, (user_id, user_id))
+            return cursor.fetchall()
+    except Exception as e:
+        print(f"[ERROR] 분석된 레포지토리 목록 조회 오류: {e}")
+        return []
+    finally:
+        conn.close()
+
+def update_session_files_data(session_id, files_data, directory_structure):
+    """세션의 파일 데이터와 디렉토리 구조를 업데이트하는 함수"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        import json
+        with conn.cursor() as cursor:
+            # files_data를 JSON 문자열로 변환
+            files_json = json.dumps(files_data, ensure_ascii=False) if files_data else None
+            
+            sql = """
+            UPDATE sessions 
+            SET files_data = %s, directory_structure = %s 
+            WHERE session_id = %s
+            """
+            cursor.execute(sql, (files_json, directory_structure, session_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[ERROR] 세션 파일 데이터 업데이트 오류: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_session_files_data(session_id):
+    """세션의 파일 데이터와 디렉토리 구조를 조회하는 함수"""
+    conn = get_db_connection()
+    if not conn:
+        return None, None
+    
+    try:
+        import json
+        with conn.cursor() as cursor:
+            sql = "SELECT files_data, directory_structure FROM sessions WHERE session_id = %s"
+            cursor.execute(sql, (session_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                files_data = None
+                if result.get('files_data'):
+                    try:
+                        files_data = json.loads(result['files_data'])
+                    except json.JSONDecodeError as e:
+                        print(f"[WARNING] 파일 데이터 JSON 파싱 오류: {e}")
+                        files_data = None
+                
+                directory_structure = result.get('directory_structure')
+                return files_data, directory_structure
+            
+            return None, None
+    except Exception as e:
+        print(f"[ERROR] 세션 파일 데이터 조회 오류: {e}")
+        return None, None
+    finally:
+        conn.close()
+
+def get_session_data_from_db(session_id):
+    """DB에서 세션의 모든 데이터를 조회하는 함수 (메모리 캐시 대체용)"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        import json
+        with conn.cursor() as cursor:
+            sql = "SELECT * FROM sessions WHERE session_id = %s"
+            cursor.execute(sql, (session_id,))
+            session_info = cursor.fetchone()
+            
+            if not session_info:
+                return None
+            
+            # 세션 데이터 구성
+            session_data = {
+                'repo_url': session_info.get('repo_url'),
+                'token': session_info.get('token'),
+                'user_id': session_info.get('user_id')
+            }
+            
+            # 파일 데이터 추가
+            if session_info.get('files_data'):
+                try:
+                    session_data['files'] = json.loads(session_info['files_data'])
+                except json.JSONDecodeError as e:
+                    print(f"[WARNING] 파일 데이터 JSON 파싱 오류: {e}")
+                    session_data['files'] = []
+            
+            # 디렉토리 구조 추가
+            if session_info.get('directory_structure'):
+                session_data['directory_structure'] = session_info['directory_structure']
+            
+            return session_data
+    except Exception as e:
+        print(f"[ERROR] 세션 데이터 조회 오류: {e}")
+        return None
     finally:
         conn.close()
 
