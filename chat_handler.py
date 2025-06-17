@@ -6,8 +6,7 @@ from github_analyzer import chroma_client
 from git_modifier import create_branch_and_commit
 import re
 import tiktoken
-from chat_memory import save_conversation, get_relevant_conversations
-import db  # DB 모듈 임포트 추가
+import db
 
 # OpenAI 토큰 계산용 tokenizer 초기화
 enc = tiktoken.get_encoding("cl100k_base")
@@ -177,75 +176,15 @@ def parse_llm_code_response(llm_response):
     return None, llm_response.strip()
 
 def handle_chat(session_id, message):
-    # app.py의 sessions 데이터에서 세션 정보 확인
-    from app import sessions
-    print(f"[DEBUG] 현재 세션 ID: {session_id}")
-    print(f"[DEBUG] 사용 가능한 세션 키: {list(sessions.keys())}")
+    # DB에서 세션 정보 확인
+    session_data = db.get_session_data_from_db(session_id)
+    if not session_data:
+        print(f"[ERROR] 세션 {session_id}를 찾을 수 없습니다.")
+        return {'answer': '세션을 찾을 수 없습니다. 새로운 분석을 시작해주세요.', 'error': 'session_not_found'}
     
-    session_data = sessions.get(session_id, {})
+    # DB에서 세션 데이터 조회
+    session_data = db.get_session_data_from_db(session_id)
     repo_path = f"./repos/{session_id}"
-    
-    # 세션 데이터가 없으면 메모리에 복원 시도
-    if not session_data:
-        print(f"[WARNING] 메모리에 세션 {session_id} 데이터가 없습니다. 복원을 시도합니다.")
-        
-        # DB에서 세션 정보 조회
-        try:
-            import db
-            import os
-            from github_analyzer import GitHubAnalyzer
-            
-            # DB에서 세션 정보 조회
-            db_conn = db.get_db_connection()
-            if db_conn:
-                try:
-                    with db_conn.cursor() as cursor:
-                        cursor.execute("SELECT * FROM sessions WHERE session_id = %s", (session_id,))
-                        db_session = cursor.fetchone()
-                finally:
-                    db_conn.close()
-                
-                if db_session:
-                    print(f"[DEBUG] DB에서 세션 정보를 찾았습니다: {db_session}")
-                    repo_url = db_session.get('repo_url')
-                    token = db_session.get('token')
-                    
-                    # 세션 데이터 메모리에 복원
-                    sessions[session_id] = {
-                        'repo_url': repo_url,
-                        'token': token
-                    }
-                    
-                    # 저장소 파일 정보 복원
-                    try:
-                        analyzer = GitHubAnalyzer(repo_url, token, session_id)
-                        if os.path.exists(analyzer.repo_path):
-                            print(f"[DEBUG] 기존 저장소 경로 확인: {analyzer.repo_path}")
-                            if analyzer.load_repo_data():
-                                sessions[session_id]['files'] = analyzer.files
-                                sessions[session_id]['directory_structure'] = analyzer.get_directory_structure()
-                                # 메모리에 세션 데이터 저장
-                                from app import save_sessions
-                                save_sessions(sessions)
-                                print(f"[DEBUG] 세션 데이터 복원 성공")
-                                
-                                # 복원된 세션 데이터 가져오기
-                                session_data = sessions.get(session_id, {})
-                    except Exception as e:
-                        import traceback
-                        print(f"[ERROR] 세션 데이터 복원 중 오류: {e}")
-                        traceback.print_exc()
-        except Exception as e:
-            import traceback
-            print(f"[ERROR] 세션 메타데이터 조회 오류: {e}")
-            traceback.print_exc()
-    
-    # 세션 데이터가 여전히 없으면 오류 반환
-    if not session_data:
-        return {
-            'answer': "세션 데이터가 없습니다. 새로운 레포지토리를 분석해주세요.",
-            'error': "session_not_found"
-        }
     
     print(f"[DEBUG] 세션 데이터 키: {list(session_data.keys())}")
     
@@ -266,11 +205,24 @@ def handle_chat(session_id, message):
             }
         print(f"[DEBUG] OpenAI API 키 확인: {api_key[:4]}...{api_key[-4:]}")
         
+        # 메시지 길이 체크 및 잘라내기 (text-embedding-3-large 모델 토큰 제한: 8192)
+        message_tokens = len(enc.encode(message))
+        print(f"[DEBUG] 메시지 토큰 수: {message_tokens}")
+        
+        embedding_input = message
+        if message_tokens > 8000:  # 안전 마진을 두고 8000 토큰으로 제한
+            print(f"[WARNING] 메시지가 너무 깁니다 ({message_tokens} 토큰). 8000 토큰으로 잘라냅니다.")
+            # 토큰 단위로 잘라내기
+            tokens = enc.encode(message)
+            truncated_tokens = tokens[:8000]
+            embedding_input = enc.decode(truncated_tokens)
+            print(f"[DEBUG] 잘라낸 메시지 토큰 수: {len(enc.encode(embedding_input))}")
+        
         # 임베딩 생성 시도
         print(f"[DEBUG] OpenAI 임베딩 API 호출 시도")
         embedding_response = openai.embeddings.create(
-            input=message,
-            model="text-embedding-3-small"
+            input=embedding_input,
+            model="text-embedding-3-large"
         )
         
         # 임베딩 결과 처리
@@ -347,10 +299,16 @@ def handle_chat(session_id, message):
             print(f"[DEBUG] 컬렉션 내 문서 수: {collection_count}")
             if collection_count == 0:
                 print(f"[WARNING] 컬렉션이 비어 있습니다: {collection_name}")
-                return {
-                    'answer': "저장소 분석 데이터가 비어 있습니다. 저장소를 다시 분석해주세요.",
-                    'error': "empty_collection"
-                }
+                # 디렉토리 구조만으로 답변 생성
+                directory_structure = session_data.get('directory_structure', '')
+                if directory_structure:
+                    answer = f"이 저장소는 분석 가능한 코드 파일이 없지만, 디렉토리 구조를 확인할 수 있습니다:\n\n{directory_structure}\n\n저장소에 대한 구체적인 질문이 있으시면 말씀해 주세요."
+                    return {'answer': answer}
+                else:
+                    return {
+                        'answer': "저장소 분석 데이터가 비어 있습니다. 저장소를 다시 분석해주세요.",
+                        'error': "empty_collection"
+                    }
         except Exception as e:
             import traceback
             print(f"[WARNING] 컬렉션 문서 수 확인 실패: {e}")
@@ -633,32 +591,23 @@ def handle_chat(session_id, message):
 
     # 3. LLM에 컨텍스트와 함께 전달하여 답변 생성
     try:
-        # 이전 대화 기록 가져오기
+        # 이전 대화 기록 가져오기 (DB에서)
         print(f"[CHAT_HANDLER] 이전 대화 기록 가져오기 시작 - 세션: {session_id}")
-        conversation_history = get_relevant_conversations(session_id, message)
+        chat_history = db.get_chat_history(session_id)
         
-        # 대화 기록 결과 로그
-        if conversation_history == '이전 대화 없음':
+        # 대화 기록을 문자열로 포맷팅
+        conversation_history = ""
+        if chat_history:
+            for chat in chat_history[-6:]:  # 최근 6개 대화만 사용
+                role = "사용자" if chat['role'] == 'user' else "AI"
+                message_content = chat.get('content') or chat.get('message', '')
+                conversation_history += f"[{role}] {message_content}\n\n"
+        
+        if not conversation_history:
+            conversation_history = "이전 대화 없음"
             print(f"[CHAT_HANDLER] 관련 대화 기록이 없습니다.")
         else:
-            newline = "\n"
-            history_lines = conversation_history.strip().split(newline)
-            conversation_count = sum(1 for line in history_lines if line.startswith('[관련 대화'))
-            print(f"[CHAT_HANDLER] 가져온 관련 대화 수: {conversation_count}개, 전체 길이: {len(conversation_history)} 문자")
-            print(f"[DEBUG] LLM에 전달될 실제 대화 기록 내용 (최대 500자):\n{conversation_history[:500]}{'...' if len(conversation_history) > 500 else ''}")
-            
-            # 각 대화 삼합수 출력 (디버깅용)
-            current_conversation = ""
-            for line in history_lines:
-                if line.startswith('[관련 대화'):
-                    if current_conversation:
-                        print(f"[CHAT_HANDLER] 대화 삼합수: {hash(current_conversation) % 1000}")
-                    current_conversation = line
-                else:
-                    current_conversation += newline + line
-            
-            if current_conversation:
-                print(f"[CHAT_HANDLER] 대화 삼합수: {hash(current_conversation) % 1000}")
+            print(f"[CHAT_HANDLER] 가져온 대화 기록 수: {len(chat_history)} 개")
         
         # 프롬프트 생성 (대화 기록 포함)
         prompt = PROMPT_TEMPLATE.format(
@@ -715,35 +664,82 @@ def handle_chat(session_id, message):
         answer = response.choices[0].message.content.strip()
         print(f"[DEBUG] LLM 응답 성공 (길이: {len(answer)} 문자)")
         
-        # 대화 기록 저장
+        # 대화 기록 저장 (DB에만)
         try:
             print(f"[CHAT_HANDLER] 대화 기록 저장 시작 - 세션: {session_id}")
-            print(f"[CHAT_HANDLER] 질문: {message[:100]}{'...' if len(message) > 100 else ''}")
-            print(f"[CHAT_HANDLER] 답변: {answer[:100]}{'...' if len(answer) > 100 else ''}")
             
-            # 질문-답변 삼합수 계산 (디버깅용)
-            qa_hash = hash(message + answer) % 10000
-            print(f"[CHAT_HANDLER] 저장할 QA 삼합수: {qa_hash}")
+            # 컨텍스트 정보가 포함된 사용자 메시지 생성 (파일명만 저장)
+            user_message_with_context = message
             
-            # 기존 메모리 기반 저장 방식 (호환성 유지)
-            save_conversation(session_id, message, answer)
-            print(f"[CHAT_HANDLER] 대화 기록 저장 성공: session_id={session_id}")
+            # 메시지에서 컨텍스트 정보 추출하여 파일명만 저장
+            if '[선택된 파일 컨텍스트]' in message:
+                # 메시지를 질문 부분과 컨텍스트 부분으로 분리
+                parts = message.split('\n\n[선택된 파일 컨텍스트]\n')
+                if len(parts) > 1:
+                    user_message_with_context = parts[0]  # 질문 부분만
+                    
+                    # 컨텍스트에서 파일명만 추출
+                    context_part = parts[1]
+                    context_files = []
+                    
+                    # "--- 파일명 (브랜치: 브랜치명) ---" 패턴에서 파일명 추출
+                    file_patterns = re.findall(r'--- (.+?) \(브랜치: .+?\) ---', context_part)
+                    for file_path in file_patterns:
+                        # 파일명에서 경로 부분만 추출 (디렉토리 구조 포함)
+                        clean_file_name = file_path.strip()
+                        if clean_file_name not in context_files:
+                            context_files.append(clean_file_name)
+                    
+                    # 파일명만 저장 (내용은 저장하지 않음)
+                    if context_files:
+                        user_message_with_context += f"\n\n[선택된 파일: {', '.join(context_files)}]"
+            elif context_chunks:
+                # 새로운 방식으로 선택된 파일이 있는 경우
+                context_files = []
+                for chunk in context_chunks:
+                    # 메타데이터에서 파일명 추출
+                    if '[' in chunk and ']' in chunk:
+                        meta_part = chunk.split('\n')[0]
+                        if '파일명:' in meta_part:
+                            file_name = meta_part.split('파일명:')[1].split(',')[0].strip()
+                            if file_name not in context_files:
+                                context_files.append(file_name)
+                
+                # 파일명만 저장
+                if context_files:
+                    user_message_with_context += f"\n\n[선택된 파일: {', '.join(context_files)}]"
             
-            # DB에 채팅 기록 저장
-            try:
-                # db 모듈 임포트
-                import db
-                # 사용자 질문 저장
-                db.add_chat_history(session_id, 'user', message)
-                # AI 응답 저장
-                db.add_chat_history(session_id, 'assistant', answer)
-                print(f"[CHAT_HANDLER] DB에 대화 기록 저장 성공: session_id={session_id}")
-            except Exception as e:
-                print(f"[CHAT_HANDLER] DB에 대화 기록 저장 실패: {str(e)}")
+            # 추가 보안: 메시지에서 파일 내용이 포함된 경우 제거
+            # 파일 내용 패턴 제거 (코드 블록, 긴 텍스트 등)
+            lines = user_message_with_context.split('\n')
+            filtered_lines = []
+            skip_content = False
+            
+            for line in lines:
+                # 파일 내용 시작 패턴 감지
+                if line.strip().startswith('---') and '브랜치:' in line:
+                    skip_content = True
+                    continue
+                elif skip_content and (line.strip() == '' or line.startswith('---')):
+                    # 파일 내용 끝 감지
+                    if line.startswith('---') and '브랜치:' in line:
+                        continue
+                    skip_content = False
+                    if line.strip() == '':
+                        continue
+                
+                # 파일 내용이 아닌 경우만 포함
+                if not skip_content:
+                    filtered_lines.append(line)
+            
+            user_message_with_context = '\n'.join(filtered_lines).strip()
+            
+            # DB에 채팅 기록 저장 (컨텍스트 정보 포함)
+            db.add_chat_history(session_id, 'user', user_message_with_context)
+            db.add_chat_history(session_id, 'assistant', answer)
+            print(f"[CHAT_HANDLER] DB에 대화 기록 저장 성공: session_id={session_id}")
         except Exception as e:
-            import traceback
-            print(f"[CHAT_HANDLER] 대화 기록 저장 실패: {str(e)}")
-            traceback.print_exc()
+            print(f"[CHAT_HANDLER] DB에 대화 기록 저장 실패: {str(e)}")
         
         # 응답이 비어있는지 확인
         if not answer:
@@ -765,19 +761,18 @@ def handle_chat(session_id, message):
         }
 
 def handle_modify_request(session_id, message):
-    from app import sessions
     print(f"[DEBUG] 현재 세션 ID: {session_id}")
-    print(f"[DEBUG] 사용 가능한 세션 키: {list(sessions.keys())}")
+    
+    # DB에서 세션 데이터 조회
+    session_data = db.get_session_data_from_db(session_id)
+    repo_path = f"./repos/{session_id}"
     
     # GitHub 푸시 의도 감지 및 로깅
     has_push_intent = detect_github_push_intent(message)
-    token_exists = bool(sessions.get(session_id, {}).get('token'))
+    token_exists = bool(session_data.get('token') if session_data else False)
     requires_confirmation = has_push_intent
     push_intent_message = '깃허브에 적용하려면 확인이 필요합니다.' if has_push_intent else ''
     print(f"[DEBUG] GitHub 푸시 의도 감지 결과: {has_push_intent}, 토큰 존재: {token_exists}")
-    
-    session_data = sessions.get(session_id, {})
-    repo_path = f"./repos/{session_id}"
     
     # 세션 데이터가 없으면 오류 반환
     if not session_data:
@@ -816,7 +811,7 @@ def handle_modify_request(session_id, message):
         print(f"[DEBUG] 수정 요청 임베딩 생성 시작: '{message[:50]}...'")
         embedding_response = openai.embeddings.create(
             input=message,
-            model="text-embedding-3-small"
+                            model="text-embedding-3-large"
         )
         
         # 임베딩 결과 처리
@@ -1120,9 +1115,23 @@ def handle_modify_request(session_id, message):
     
     # 프롬프트 생성 및 LLM 호출
     try:
-        # 이전 대화 기록 가져오기
-        conversation_history = get_relevant_conversations(session_id, message)
-        print(f"[DEBUG] 코드 수정 관련 대화 기록 조회 결과: {len(conversation_history) if conversation_history != '이전 대화 없음' else 0} 문자")
+        # 이전 대화 기록 가져오기 (DB에서)
+        print(f"[CHAT_HANDLER] 이전 대화 기록 가져오기 시작 - 세션: {session_id}")
+        chat_history = db.get_chat_history(session_id)
+        
+        # 대화 기록을 문자열로 포맷팅
+        conversation_history = ""
+        if chat_history:
+            for chat in chat_history[-6:]:  # 최근 6개 대화만 사용
+                role = "사용자" if chat['role'] == 'user' else "AI"
+                message_content = chat.get('content') or chat.get('message', '')
+                conversation_history += f"[{role}] {message_content}\n\n"
+        
+        if not conversation_history:
+            conversation_history = "이전 대화 없음"
+            print(f"[CHAT_HANDLER] 관련 대화 기록이 없습니다.")
+        else:
+            print(f"[CHAT_HANDLER] 가져온 대화 기록 수: {len(chat_history)} 개")
         
         # 프롬프트 생성 (대화 기록 포함)
         prompt = MODIFY_PROMPT_TEMPLATE.format(
@@ -1234,18 +1243,64 @@ def handle_modify_request(session_id, message):
         llm_code = response.choices[0].message.content.strip()
         print(f"[DEBUG] 코드수정 LLM 응답 성공 (길이: {len(llm_code)} 문자)")
         
-        # 대화 기록 저장
+        # 대화 기록 저장 (DB에만)
         try:
             print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 시작 - 세션: {session_id}")
             summary_answer = f"코드 수정 요청: {message}\n\n수정 작업 완료"
-            print(f"[CHAT_HANDLER] 질문: {message[:100]}{'...' if len(message) > 100 else ''}")
-            print(f"[CHAT_HANDLER] 요약 답변: {summary_answer[:100]}{'...' if len(summary_answer) > 100 else ''}")
             
-            # 질문-답변 삼합수 계산 (디버깅용)
-            qa_hash = hash(message + summary_answer) % 10000
-            print(f"[CHAT_HANDLER] 저장할 코드 수정 QA 삼합수: {qa_hash}")
+            # 컨텍스트 정보가 포함된 사용자 메시지 처리 (파일명만 저장)
+            user_message_with_context = message
             
-            save_conversation(session_id, message, summary_answer)
+            # 메시지에서 컨텍스트 정보 추출하여 파일명만 저장
+            if '[선택된 파일 컨텍스트]' in message:
+                # 메시지를 질문 부분과 컨텍스트 부분으로 분리
+                parts = message.split('\n\n[선택된 파일 컨텍스트]\n')
+                if len(parts) > 1:
+                    user_message_with_context = parts[0]  # 질문 부분만
+                    
+                    # 컨텍스트에서 파일명만 추출
+                    context_part = parts[1]
+                    context_files = []
+                    
+                    # "--- 파일명 (브랜치: 브랜치명) ---" 패턴에서 파일명 추출
+                    file_patterns = re.findall(r'--- (.+?) \(브랜치: .+?\) ---', context_part)
+                    for file_path in file_patterns:
+                        # 파일명에서 경로 부분만 추출 (디렉토리 구조 포함)
+                        clean_file_name = file_path.strip()
+                        if clean_file_name not in context_files:
+                            context_files.append(clean_file_name)
+                    
+                    # 파일명만 저장 (내용은 저장하지 않음)
+                    if context_files:
+                        user_message_with_context += f"\n\n[선택된 파일: {', '.join(context_files)}]"
+            
+            # 추가 보안: 메시지에서 파일 내용이 포함된 경우 제거
+            lines = user_message_with_context.split('\n')
+            filtered_lines = []
+            skip_content = False
+            
+            for line in lines:
+                # 파일 내용 시작 패턴 감지
+                if line.strip().startswith('---') and '브랜치:' in line:
+                    skip_content = True
+                    continue
+                elif skip_content and (line.strip() == '' or line.startswith('---')):
+                    # 파일 내용 끝 감지
+                    if line.startswith('---') and '브랜치:' in line:
+                        continue
+                    skip_content = False
+                    if line.strip() == '':
+                        continue
+                
+                # 파일 내용이 아닌 경우만 포함
+                if not skip_content:
+                    filtered_lines.append(line)
+            
+            user_message_with_context = '\n'.join(filtered_lines).strip()
+            
+            # DB에 채팅 기록 저장
+            db.add_chat_history(session_id, 'user', user_message_with_context)
+            db.add_chat_history(session_id, 'assistant', summary_answer)
             print(f"[CHAT_HANDLER] 코드 수정 대화 기록 저장 성공: session_id={session_id}")
         except Exception as e:
             import traceback
@@ -1409,9 +1464,9 @@ def apply_changes(session_id, file_name, new_content, push_to_github=False, comm
         print(f"[ERROR] 저장소 경로가 존재하지 않습니다: {repo_path}")
         return {'result': f'에러: 저장소 경로가 존재하지 않습니다: {repo_path}', 'success': False}
     
-    # 세션 데이터에서 토큰 가져오기
-    from app import sessions
-    token = sessions.get(session_id, {}).get('token', None)
+    # DB에서 세션 데이터 조회하여 토큰 가져오기
+    session_data = db.get_session_data_from_db(session_id)
+    token = session_data.get('token') if session_data else None
     
     # GitHub 푸시 여부 확인
     can_push = push_to_github and token

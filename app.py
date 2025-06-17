@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, Response, session, flash
 import uuid
 import time
-from github_analyzer import analyze_repository, GitHubRepositoryFetcher
+from github_analyzer import analyze_repository, GitHubRepositoryFetcher, get_repository_branches, get_repository_file_tree, get_file_content
 from chat_handler import handle_chat, handle_modify_request, apply_changes
 from dotenv import load_dotenv
 import os
@@ -43,31 +43,10 @@ if not db_initialized:
     print("오류: 데이터베이스 초기화에 실패했습니다.")
     sys.exit(1)
 
-# 세션 데이터를 파일에 저장하고 로드하는 함수
-def save_sessions(sessions_data):
-    try:
-        os.makedirs('sessions', exist_ok=True)
-        with open('sessions/sessions.json', 'w', encoding='utf-8') as f:
-            json.dump(sessions_data, f, ensure_ascii=False, indent=2)
-        print(f"[DEBUG] 세션 데이터 저장 완료 (세션 수: {len(sessions_data)})")
-    except Exception as e:
-        print(f"[DEBUG] 세션 데이터 저장 오류: {e}")
-
-def load_sessions():
-    try:
-        if os.path.exists('sessions/sessions.json'):
-            with open('sessions/sessions.json', 'r', encoding='utf-8') as f:
-                sessions_data = json.load(f)
-            print(f"[DEBUG] 세션 데이터 로드 완료 (세션 수: {len(sessions_data)})")
-            return sessions_data
-    except Exception as e:
-        print(f"[DEBUG] 세션 데이터 로드 오류: {e}")
-    return {}
+# 파일 기반 저장 제거 - 모든 데이터는 DB에 저장됨
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24) # Flask 세션을 위한 secret_key 설정
-
-sessions = load_sessions()  # session_id: {'repo_url': ..., 'token': ..., 'files': ...}
 
 @app.route('/')
 def home():
@@ -99,12 +78,12 @@ def login():
             flash('GitHub 로그인을 이용해주세요.', 'error')
             return render_template('login.html')
         
-        if not user.get('password'):
+        if not user.get('password_hash'):
             flash('비밀번호가 설정되지 않은 계정입니다. 관리자에게 문의하세요.', 'error')
             return render_template('login.html')
         
         # 비밀번호 확인
-        if not bcrypt.checkpw(password.encode('utf-8'), user.get('password').encode('utf-8')):
+        if not bcrypt.checkpw(password.encode('utf-8'), user.get('password_hash').encode('utf-8')):
             flash('사용자 이름 또는 비밀번호가 올바르지 않습니다.', 'error')
             return render_template('login.html')
         
@@ -324,7 +303,35 @@ def index():
             print(f"[ERROR] Failed to fetch repositories: {e}")
             repositories = []
 
-    return render_template('index.html', repositories=repositories, user_info=user_info)
+    # 분석된 레포지토리 목록 가져오기
+    analyzed_repos = []
+    if 'user_id' in session:
+        analyzed_repos = db.get_analyzed_repositories(session['user_id'])
+        
+        # 분석된 레포지토리에서 내 레포와 다른 사람 레포 구분
+        my_repos_analyzed = []
+        public_repos_analyzed = []
+        
+        if user_info and analyzed_repos:
+            my_username = user_info.get('login', '').lower()
+            for repo in analyzed_repos:
+                repo_url = repo.get('repo_url', '')
+                if repo_url:
+                    # URL에서 owner 추출
+                    try:
+                        owner = repo_url.replace('https://github.com/', '').split('/')[0].lower()
+                        if owner == my_username:
+                            my_repos_analyzed.append(repo)
+                        else:
+                            public_repos_analyzed.append(repo)
+                    except:
+                        public_repos_analyzed.append(repo)
+    
+    return render_template('index.html', 
+                         repositories=repositories, 
+                         user_info=user_info,
+                         my_repos_analyzed=my_repos_analyzed,
+                         public_repos_analyzed=public_repos_analyzed)
 
 @app.route('/chat/<session_id>')
 def chat(session_id):
@@ -334,12 +341,17 @@ def chat(session_id):
     
     user_id = session.get('user_id')
     
-    # 세션 데이터 확인
-    from app import sessions as app_sessions
-    session_data = app_sessions.get(session_id, {})
+    # DB에서 세션 데이터 확인
+    print(f"[DEBUG] DB에서 세션 {session_id} 확인 중...")
+    session_data = db.get_session_data_from_db(session_id)
     
     if not session_data:
         flash('존재하지 않는 세션입니다.', 'error')
+        return redirect(url_for('index'))
+    
+    # 세션 소유자 확인
+    if session_data.get('user_id') != user_id:
+        flash('접근 권한이 없는 세션입니다.', 'error')
         return redirect(url_for('index'))
     
     # 레포지토리 URL 가져오기
@@ -370,33 +382,22 @@ def new_chat():
     if not session_id:
         return jsonify({'status': '에러', 'error': '새 채팅 생성 실패'}), 500
     
-    # 세션 메모리에 기본 데이터 추가
+    # 기존 세션에서 파일 정보 복사 (DB에서)
     try:
-        # 기존 세션에서 파일 정보 복사
-        from app import sessions as app_sessions
         # 같은 레포의 기존 세션 찾기
-        existing_sessions = [s_id for s_id, s_data in app_sessions.items() 
-                            if s_data.get('repo_url') == repo_url]
-        
-        # 세션 데이터 초기화
-        app_sessions[session_id] = {
-            'repo_url': repo_url,
-            'token': token
-        }
-        
-        # 기존 세션이 있으면 파일 정보 복사
+        existing_sessions = db.get_all_chat_sessions(user_id, repo_url)
         if existing_sessions:
-            existing_session_id = existing_sessions[0]
-            existing_data = app_sessions.get(existing_session_id, {})
-            if 'files' in existing_data:
-                app_sessions[session_id]['files'] = existing_data['files']
-            if 'directory_structure' in existing_data:
-                app_sessions[session_id]['directory_structure'] = existing_data['directory_structure']
-        
-        # 세션 데이터 저장
-        save_sessions(app_sessions)
+            # 가장 최근 세션에서 파일 정보 복사
+            latest_session = existing_sessions[0]
+            existing_session_id = latest_session['session_id']
+            
+            if existing_session_id != session_id:  # 자기 자신이 아닌 경우만
+                files_data, directory_structure = db.get_session_files_data(existing_session_id)
+                if files_data or directory_structure:
+                    db.update_session_files_data(session_id, files_data, directory_structure)
+                    print(f"[DEBUG] 기존 세션 {existing_session_id}에서 파일 정보 복사 완료")
     except Exception as e:
-        print(f"[ERROR] 세션 메모리 업데이트 실패: {e}")
+        print(f"[ERROR] 세션 파일 정보 복사 실패: {e}")
     
     return jsonify({'status': '성공', 'session_id': session_id})
 
@@ -423,16 +424,104 @@ def get_chat_sessions():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
+        print(f"[DEBUG] analyze 함수 시작")
+        
         # 로그인 여부 확인
         if 'user_id' not in session:
+            print(f"[ERROR] 로그인되지 않은 사용자")
             return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
         
         user_id = session.get('user_id')
+        print(f"[DEBUG] 사용자 ID: {user_id}")
+        
         data = request.get_json()
+        print(f"[DEBUG] 요청 데이터: {data}")
+        
+        if not data:
+            print(f"[ERROR] 요청 데이터가 없음")
+            return jsonify({'status': '에러', 'error': '요청 데이터가 없습니다.'}), 400
+        
         repo_url = data.get('repo_url')
         token = data.get('token')
-        if not repo_url or not repo_url.startswith('https://github.com/'):
+        print(f"[DEBUG] repo_url: {repo_url}, token: {'있음' if token else '없음'}")
+        
+        # 토큰이 제공되지 않았으면 세션에서 GitHub 토큰 사용
+        if not token and 'github_token' in session:
+            token = session['github_token']
+            print(f"[DEBUG] 세션에서 GitHub 토큰을 자동으로 사용합니다.")
+        
+        if not repo_url:
+            print(f"[ERROR] repo_url이 없음")
+            return jsonify({'status': '에러', 'error': 'GitHub 저장소 URL이 필요합니다.'}), 400
+            
+        if not repo_url.startswith('https://github.com/'):
+            print(f"[ERROR] 잘못된 GitHub URL 형식: {repo_url}")
             return jsonify({'status': '에러', 'error': '올바른 GitHub 저장소 URL을 입력하세요.'}), 400
+        
+        # 레포지토리 정보 확인 (Public/Private 여부)
+        def check_repo_info(repo_url, token=None):
+            """GitHub API로 레포지토리 정보 확인"""
+            try:
+                print(f"[DEBUG] check_repo_info 호출: repo_url={repo_url}, token={'있음' if token else '없음'}")
+                
+                # URL에서 owner/repo 추출
+                parts = repo_url.replace('https://github.com/', '').split('/')
+                if len(parts) < 2:
+                    print(f"[ERROR] 잘못된 GitHub URL 형식: {repo_url}")
+                    return None, "잘못된 GitHub URL 형식입니다."
+                
+                owner, repo = parts[0], parts[1]
+                api_url = f"https://api.github.com/repos/{owner}/{repo}"
+                print(f"[DEBUG] GitHub API 호출: {api_url}")
+                
+                headers = {'Accept': 'application/vnd.github.v3+json'}
+                if token:
+                    headers['Authorization'] = f'token {token}'
+                    print(f"[DEBUG] 토큰 사용하여 API 호출")
+                
+                response = requests.get(api_url, headers=headers)
+                print(f"[DEBUG] GitHub API 응답: status_code={response.status_code}")
+                
+                if response.status_code == 200:
+                    repo_info = response.json()
+                    print(f"[DEBUG] 레포지토리 정보 확인 성공: private={repo_info.get('private', False)}")
+                    return {
+                        'exists': True,
+                        'private': repo_info.get('private', False),
+                        'owner': repo_info.get('owner', {}).get('login', owner),
+                        'name': repo_info.get('name', repo),
+                        'full_name': repo_info.get('full_name', f"{owner}/{repo}")
+                    }, None
+                elif response.status_code == 404:
+                    # 토큰 없이 404면 Private 레포일 가능성
+                    if not token:
+                        print(f"[DEBUG] 토큰 없이 404 응답 - Private 레포일 가능성")
+                        return None, "private_repo_needs_token"
+                    else:
+                        print(f"[ERROR] 토큰 있음에도 404 응답 - 레포지토리 없음")
+                        return None, "레포지토리를 찾을 수 없습니다."
+                else:
+                    print(f"[ERROR] GitHub API 오류: {response.status_code}, 응답: {response.text}")
+                    return None, f"GitHub API 오류: {response.status_code}"
+            except Exception as e:
+                print(f"[ERROR] check_repo_info 예외 발생: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return None, f"레포지토리 정보 확인 중 오류: {str(e)}"
+        
+        # 레포지토리 정보 확인
+        repo_info, error = check_repo_info(repo_url, token)
+        
+        # 토큰이 없고 Private 레포인 경우 토큰 입력 요청
+        if error == "private_repo_needs_token":
+            return jsonify({
+                'status': '토큰 필요',
+                'error': 'private_repo_needs_token',
+                'message': '이 레포지토리는 비공개이거나 접근 권한이 필요합니다. GitHub Personal Access Token을 입력해주세요.'
+            }), 400
+        
+        if error and error != "private_repo_needs_token":
+            return jsonify({'status': '에러', 'error': error}), 400
         
         # GitHub 분석 모듈 미리 임포트
         from github_analyzer import analyze_repository, GitHubRepositoryFetcher
@@ -446,52 +535,6 @@ def analyze():
         if existing_session:
             session_id = existing_session['session_id']
             print(f"[DEBUG] 기존에 분석된 레포지토리를 발견했습니다. 세션 ID: {session_id}")
-            # 채팅 기록 가져오기
-            chat_history = db.get_chat_history(session_id)
-            if chat_history:
-                print(f"[DEBUG] 기존 채팅 기록이 {len(chat_history)}건 있습니다.")
-            
-            # 기존 세션 데이터가 메모리에 없으면 복원
-            if session_id not in sessions:
-                print(f"[DEBUG] 세션 ID {session_id}의 데이터를 메모리에 복원합니다.")
-                # DB에서 조회한 세션 정보로 기본 데이터 설정
-                sessions[session_id] = {
-                    'repo_url': repo_url,
-                    'token': token
-                }
-                
-                # github_analyzer.py 사용하여 파일 정보 복원 (필요시)
-                try:
-                    # 레포지토리에서 직접 파일 정보 불러오기
-                    fetcher = GitHubRepositoryFetcher(repo_url, token, session_id)
-                    if fetcher.repo_path and os.path.exists(fetcher.repo_path):
-                        print(f"[DEBUG] 기존 저장소 경로 확인: {fetcher.repo_path}")
-                        # 기존 데이터 불러오기
-                        if fetcher.load_repo_data():
-                            sessions[session_id]['files'] = fetcher.files
-                            sessions[session_id]['directory_structure'] = fetcher.get_directory_structure()
-                            save_sessions(sessions)
-                            print(f"[DEBUG] 세션 ID {session_id}의 기존 파일 정보가 복원되었습니다.")
-                        else:
-                            print(f"[WARNING] 기존 데이터 불러오기 실패, 새로 분석합니다")
-                            # 실패시 새로 분석
-                            result = analyze_repository(repo_url, token, session_id)
-                            if 'files' in result and 'directory_structure' in result:
-                                sessions[session_id]['files'] = result['files']
-                                sessions[session_id]['directory_structure'] = result['directory_structure']
-                                save_sessions(sessions)
-                                print(f"[DEBUG] 세션 ID {session_id}의 파일 정보가 재분석되어 복원되었습니다.")
-                    else:
-                        # 저장소 폴더가 없으면 새로 분석
-                        result = analyze_repository(repo_url, token, session_id)
-                        if 'files' in result and 'directory_structure' in result:
-                            sessions[session_id]['files'] = result['files']
-                            sessions[session_id]['directory_structure'] = result['directory_structure']
-                            save_sessions(sessions)
-                            print(f"[DEBUG] 세션 ID {session_id}의 파일 정보가 새로 분석되어 복원되었습니다.")
-                except Exception as e:
-                    print(f"[WARNING] 세션 파일 정보 복원 중 오류: {e}")
-                    traceback.print_exc()
             
             # 기존 채팅 화면으로 리다이렉트
             return jsonify({
@@ -584,19 +627,11 @@ def analyze():
                 # 세션 데이터 저장 - 80%
                 yield json.dumps({'status': '세션 데이터 저장 중...', 'progress': 80, 'session_id': session_id}) + '\n'
                 
-                # 세션 데이터를 메모리와 데이터베이스에 저장
-                sessions[session_id] = {
-                    'repo_url': repo_url,
-                    'token': token,
-                    'files': files,
-                    'directory_structure': directory_structure
-                }
-                
-                # 세션 데이터를 파일에 저장 (기존 호환성 유지)
-                save_sessions(sessions)
-                
                 # 세션 데이터를 데이터베이스에 저장
                 db.create_session(session_id, user_id, repo_url, token)
+                
+                # 파일 데이터와 디렉토리 구조를 DB에 저장
+                db.update_session_files_data(session_id, files, directory_structure)
                 
                 # 세션 데이터 저장 완료 - 90%
                 yield json.dumps({'status': '세션 데이터 저장 완료', 'progress': 90, 'session_id': session_id}) + '\n'
@@ -721,7 +756,8 @@ def apply_changes_api():
             return jsonify({'error': '세션ID, 파일명, 코드 내용을 모두 입력하세요.'}), 400
         
         # GitHub 푸시 요청 시 토큰 확인
-        if push_to_github and not sessions.get(session_id, {}).get('token'):
+        session_data = db.get_session_data_from_db(session_id)
+        if push_to_github and not (session_data and session_data.get('token')):
             return jsonify({
                 'error': 'GitHub 토큰이 없어 원격 저장소에 푸시할 수 없습니다. 시작 화면에서 토큰을 입력해주세요.',
                 'code': 'token_required',
@@ -770,7 +806,8 @@ def check_push_intent():
         has_push_intent = detect_github_push_intent(message)
         
         # 토큰 확인
-        token_exists = bool(sessions.get(session_id, {}).get('token'))
+        session_data = db.get_session_data_from_db(session_id)
+        token_exists = bool(session_data and session_data.get('token'))
         
         return jsonify({
             'has_push_intent': has_push_intent,
@@ -799,11 +836,12 @@ def push_to_github():
             return jsonify({'success': False, 'error': '필수 파라미터가 누락되었습니다.'})
         
         # 세션 데이터 확인
-        if session_id not in sessions:
+        session_data = db.get_session_data_from_db(session_id)
+        if not session_data:
             return jsonify({'success': False, 'error': '세션을 찾을 수 없습니다.'})
         
         # 토큰 확인
-        if not sessions.get(session_id, {}).get('token'):
+        if not session_data.get('token'):
             return jsonify({'success': False, 'error': 'GitHub 토큰이 설정되지 않았습니다.'})
         
         # 기본 커밋 메시지
@@ -837,7 +875,8 @@ def apply_local():
             return jsonify({'success': False, 'error': '필수 파라미터가 누락되었습니다.'})
         
         # 세션 데이터 확인
-        if session_id not in sessions:
+        session_data = db.get_session_data_from_db(session_id)
+        if not session_data:
             return jsonify({'success': False, 'error': '세션을 찾을 수 없습니다.'})
         
         # 변경사항 로컬에만 적용
@@ -974,15 +1013,109 @@ def delete_chat_session():
     remaining_sessions = db.get_all_chat_sessions(user_id, repo_url)
     next_session_id = remaining_sessions[0]['session_id'] if remaining_sessions else None
     
-    # 세션 데이터에서도 삭제
-    if session_id in sessions:
-        del sessions[session_id]
+    # 세션 데이터는 이미 DB에서 삭제됨
     
     return jsonify({
         'status': '성공', 
         'message': '세션이 삭제되었습니다.',
         'next_session_id': next_session_id
     })
+
+@app.route('/api/branches/<session_id>')
+def get_branches(session_id):
+    """세션의 레포지토리 브랜치 목록을 반환합니다."""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+    
+    try:
+        # DB에서 세션 정보 조회
+        session_data = db.get_session_data_from_db(session_id)
+        if not session_data:
+            return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+        
+        repo_url = session_data.get('repo_url')
+        if not repo_url:
+            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.'}), 404
+        
+        # GitHub 토큰 가져오기
+        github_token = session_data.get('github_token')
+        
+        # 브랜치 목록 조회
+        result = get_repository_branches(repo_url, github_token)
+        
+        if result.get('success'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        print(f"[ERROR] 브랜치 목록 조회 실패: {str(e)}")
+        return jsonify({'error': f'브랜치 목록 조회 중 오류가 발생했습니다: {str(e)}'}), 500
+
+@app.route('/api/files/<session_id>/<branch_name>')
+def get_file_tree(session_id, branch_name):
+    """특정 브랜치의 파일 구조를 반환합니다."""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+    
+    try:
+        # DB에서 세션 정보 조회
+        session_data = db.get_session_data_from_db(session_id)
+        if not session_data:
+            return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+        
+        repo_url = session_data.get('repo_url')
+        if not repo_url:
+            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.'}), 404
+        
+        # GitHub 토큰 가져오기
+        github_token = session_data.get('github_token')
+        
+        # 파일 구조 조회
+        result = get_repository_file_tree(repo_url, branch_name, github_token)
+        
+        if result.get('success'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        print(f"[ERROR] 파일 구조 조회 실패: {str(e)}")
+        return jsonify({'error': f'파일 구조 조회 중 오류가 발생했습니다: {str(e)}'}), 500
+
+@app.route('/api/file-content/<session_id>/<branch_name>/<path:file_path>')
+def get_file_content_api(session_id, branch_name, file_path):
+    """특정 파일의 내용을 반환합니다."""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인이 필요합니다.'}), 401
+    
+    try:
+        # DB에서 세션 정보 조회
+        session_data = db.get_session_data_from_db(session_id)
+        if not session_data:
+            return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+        
+        repo_url = session_data.get('repo_url')
+        if not repo_url:
+            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.'}), 404
+        
+        # GitHub 토큰 가져오기
+        github_token = session_data.get('github_token')
+        
+        # 파일 내용 조회
+        result = get_file_content(repo_url, file_path, branch_name, github_token)
+        
+        if result.get('success'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        print(f"[ERROR] 파일 내용 조회 실패: {str(e)}")
+        return jsonify({'error': f'파일 내용 조회 중 오류가 발생했습니다: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(debug=False) 

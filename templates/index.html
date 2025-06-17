@@ -129,9 +129,12 @@
           {% if repositories %}
             <ul class="space-y-2" id="repo-list">
               {% for repo in repositories %}
-                <li class="flex items-center repo-item">
+                <li class="flex items-center repo-item group">
                   <span class="w-3 h-3 mr-2 rounded-full {% if repo.private %}bg-red-500{% else %}bg-green-500{% endif %} flex-shrink-0" title="{% if repo.private %}Private{% else %}Public{% endif %}"></span>
-                  <a href="{{ repo.html_url }}" target="_blank" class="text-gray-300 hover:text-white text-sm truncate" title="{{ repo.full_name }}">{{ repo.owner.login }}/{{ repo.name }}</a>
+                  <button onclick="showRepoActionModal('{{ repo.html_url }}', '{{ repo.full_name }}')" class="flex-1 text-left text-gray-300 hover:text-white text-sm truncate mr-2" title="{{ repo.full_name }} 작업 선택">{{ repo.owner.login }}/{{ repo.name }}</button>
+                  <a href="{{ repo.html_url }}" target="_blank" class="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700" title="GitHub에서 보기">
+                    <span class="material-icons text-gray-400 hover:text-white text-sm">open_in_new</span>
+                  </a>
                 </li>
               {% endfor %}
             </ul>
@@ -147,6 +150,56 @@
           {% endif %}
         </div>
       </div>
+      
+      <!-- 분석된 레포지토리 섹션 -->
+      {% if my_repos_analyzed or public_repos_analyzed %}
+      <div class="mb-6">
+        <h2 class="text-white font-semibold mb-3">분석된 레포지토리</h2>
+        
+        <!-- 내 분석된 레포지토리 -->
+        {% if my_repos_analyzed %}
+        <div class="mb-4">
+          <h3 class="text-gray-300 text-sm mb-2">My Analyzed Repositories</h3>
+          <ul class="space-y-2">
+            {% for repo in my_repos_analyzed %}
+              {% set repo_parts = repo.repo_url.replace('https://github.com/', '').split('/') %}
+              {% if repo_parts|length >= 2 %}
+                <li class="flex items-center repo-item group">
+                  <span class="w-3 h-3 mr-2 rounded-full bg-blue-500 flex-shrink-0" title="분석됨"></span>
+                  <button onclick="showRepoActionModal('{{ repo.repo_url }}', '{{ repo_parts[0] }}/{{ repo_parts[1] }}')" class="flex-1 text-left text-gray-300 hover:text-white text-sm truncate mr-2" title="{{ repo_parts[0] }}/{{ repo_parts[1] }} 작업 선택">{{ repo_parts[0] }}/{{ repo_parts[1] }}</button>
+                  <a href="{{ repo.repo_url }}" target="_blank" class="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700" title="GitHub에서 보기">
+                    <span class="material-icons text-gray-400 hover:text-white text-sm">open_in_new</span>
+                  </a>
+                </li>
+              {% endif %}
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        
+        <!-- 다른 사람의 분석된 레포지토리 -->
+        {% if public_repos_analyzed %}
+        <div class="mb-4">
+          <h3 class="text-gray-300 text-sm mb-2">Public Repositories</h3>
+          <ul class="space-y-2">
+            {% for repo in public_repos_analyzed %}
+              {% set repo_parts = repo.repo_url.replace('https://github.com/', '').split('/') %}
+              {% if repo_parts|length >= 2 %}
+                <li class="flex items-center repo-item group">
+                  <span class="w-3 h-3 mr-2 rounded-full bg-green-500 flex-shrink-0" title="Public 분석됨"></span>
+                  <button onclick="showRepoActionModal('{{ repo.repo_url }}', '{{ repo_parts[0] }}/{{ repo_parts[1] }}')" class="flex-1 text-left text-gray-300 hover:text-white text-sm truncate mr-2" title="{{ repo_parts[0] }}/{{ repo_parts[1] }} 작업 선택">{{ repo_parts[0] }}/{{ repo_parts[1] }}</button>
+                  <a href="{{ repo.repo_url }}" target="_blank" class="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-700" title="GitHub에서 보기">
+                    <span class="material-icons text-gray-400 hover:text-white text-sm">open_in_new</span>
+                  </a>
+                </li>
+              {% endif %}
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+      
       <!-- 다른 사이드바 메뉴 항목들 (필요시 추가) -->
     </div>
   </div>
@@ -201,6 +254,31 @@
       </div>
     </div>
   </div>
+  <!-- 레포지토리 작업 선택 모달 -->
+  <div id="repo-action-modal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" style="display:none">
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-md w-full mx-4">
+      <h3 class="text-xl font-bold text-white mb-4" id="modal-repo-name">레포지토리 작업 선택</h3>
+      <p class="text-gray-300 mb-6">이 레포지토리로 무엇을 하시겠습니까?</p>
+      
+      <div class="space-y-3">
+        <button id="analyze-repo-btn" class="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md transition-all duration-200">
+          <span class="material-icons mr-2">search</span>
+          AI 분석 시작하기
+        </button>
+        
+        <button id="goto-github-btn" class="w-full flex items-center justify-center bg-gray-600 hover:bg-gray-700 text-white font-semibold py-3 px-4 rounded-md transition-all duration-200">
+          <span class="material-icons mr-2">open_in_new</span>
+          GitHub에서 보기
+        </button>
+        
+        <button onclick="closeRepoActionModal()" class="w-full flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold py-3 px-4 rounded-md transition-all duration-200">
+          <span class="material-icons mr-2">close</span>
+          취소
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- CSS 애니메이션 로딩 오버레이 -->
   <div id="loading-overlay" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" style="display:none">
     <div class="flex flex-col items-center">
@@ -216,8 +294,20 @@
 </main>
 </div>
 <script>
-        document.getElementById('analyze-form').onsubmit = async function(e) {
-            e.preventDefault();
+        // 공통 분석 함수
+        async function performAnalysis(repoUrl, token = '') {
+            console.log('performAnalysis 호출됨');
+            console.log('repoUrl:', repoUrl);
+            console.log('token:', token);
+            console.log('repoUrl 타입:', typeof repoUrl);
+            console.log('repoUrl 길이:', repoUrl ? repoUrl.length : 'null/undefined');
+            
+            if (!repoUrl || repoUrl.trim() === '') {
+                console.error('performAnalysis: repoUrl이 비어있습니다!');
+                alert('레포지토리 URL이 비어있습니다. 다시 시도해주세요.');
+                return;
+            }
+            
             document.getElementById('loading-overlay').style.display = 'flex';
             document.getElementById('status').innerText = '분석 중...';
             document.getElementById('progress-bar').style.width = '0%';
@@ -272,13 +362,30 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        repo_url: document.getElementById('repo-url').value,
-                        token: document.getElementById('token').value
+                        repo_url: repoUrl,
+                        token: token
                     })
                 });
                 
                 if (!res.ok) {
                     const errorData = await res.json();
+                    
+                    // 토큰이 필요한 경우 처리
+                    if (errorData.error === 'private_repo_needs_token') {
+                        stopFakeProgress();
+                        document.getElementById('loading-overlay').style.display = 'none';
+                        
+                        const token = prompt('이 레포지토리는 비공개입니다. GitHub Personal Access Token을 입력해주세요:');
+                        if (token && token.trim()) {
+                            // 토큰을 입력받았으면 다시 분석 시도
+                            await performAnalysis(repoUrl, token.trim());
+                            return;
+                        } else {
+                            document.getElementById('status').innerText = '토큰이 필요한 비공개 레포지토리입니다.';
+                            return;
+                        }
+                    }
+                    
                     throw new Error(errorData.error || '서버 오류');
                 }
                 
@@ -339,7 +446,7 @@
                 if (sessionId) {
                     // 세션 ID가 있지만 아직 리다이렉트되지 않은 경우
                     if (!window.location.href.includes(`/chat/${sessionId}`)) {
-                        window.location.href = `/chat/${sessionId}`;
+                    window.location.href = `/chat/${sessionId}`;
                     }
                 } else {
                     console.error('세션 ID를 받지 못했습니다. 서버 로그를 확인해 주세요.');
@@ -354,6 +461,105 @@
                 console.error('분석 오류:', error);
             }
         }
+        
+        // 레포지토리 작업 선택 모달 관련 변수
+        let currentRepoUrl = '';
+        let currentRepoName = '';
+        
+        // 레포지토리 작업 선택 모달 표시
+        function showRepoActionModal(repoUrl, repoName) {
+            console.log('showRepoActionModal 호출됨');
+            console.log('전달받은 repoUrl:', repoUrl);
+            console.log('전달받은 repoName:', repoName);
+            console.log('repoUrl 타입:', typeof repoUrl);
+            console.log('repoUrl 길이:', repoUrl ? repoUrl.length : 'null/undefined');
+            
+            currentRepoUrl = repoUrl;
+            currentRepoName = repoName;
+            
+            console.log('저장된 currentRepoUrl:', currentRepoUrl);
+            
+            document.getElementById('modal-repo-name').textContent = repoName;
+            document.getElementById('repo-action-modal').style.display = 'flex';
+            
+            // 버튼 이벤트 리스너 설정
+            document.getElementById('analyze-repo-btn').onclick = function() {
+                console.log('분석 버튼 클릭됨, currentRepoUrl:', currentRepoUrl);
+                const urlToAnalyze = currentRepoUrl; // URL을 미리 저장
+                closeRepoActionModal();
+                analyzeRepository(urlToAnalyze); // 저장된 URL 사용
+            };
+            
+            document.getElementById('goto-github-btn').onclick = function() {
+                console.log('GitHub 보기 버튼 클릭됨, currentRepoUrl:', currentRepoUrl);
+                const urlToOpen = currentRepoUrl; // URL을 미리 저장
+                closeRepoActionModal();
+                window.open(urlToOpen, '_blank');
+            };
+        }
+        
+        // 레포지토리 작업 선택 모달 닫기
+        function closeRepoActionModal() {
+            document.getElementById('repo-action-modal').style.display = 'none';
+            currentRepoUrl = '';
+            currentRepoName = '';
+        }
+        
+        // 모달 외부 클릭 시 닫기
+        document.getElementById('repo-action-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeRepoActionModal();
+            }
+        });
+        
+        // ESC 키로 모달 닫기
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeRepoActionModal();
+            }
+        });
+        
+        // 레포지토리 분석 함수 (사이드바에서 호출)
+        async function analyzeRepository(repoUrl) {
+            console.log('레포지토리 분석 시작:', repoUrl);
+            console.log('repoUrl 타입:', typeof repoUrl);
+            console.log('repoUrl 길이:', repoUrl ? repoUrl.length : 'null/undefined');
+            
+            if (!repoUrl || repoUrl.trim() === '') {
+                console.error('repoUrl이 비어있습니다!');
+                alert('레포지토리 URL이 비어있습니다. 다시 시도해주세요.');
+                return;
+            }
+            
+            // 토큰은 서버에서 자동으로 세션에서 가져옴
+            await performAnalysis(repoUrl, '');
+        }
+        
+        // 폼 제출 이벤트 핸들러
+        document.getElementById('analyze-form').onsubmit = async function(e) {
+            e.preventDefault();
+            const repoUrl = document.getElementById('repo-url').value;
+            const token = document.getElementById('token').value;
+            await performAnalysis(repoUrl, token);
+        }
+        
+        // 레포지토리 검색 기능
+        document.getElementById('repo-search-input').addEventListener('input', function(e) {
+            const searchTerm = e.target.value.toLowerCase();
+            const repoItems = document.querySelectorAll('.repo-item');
+            
+            repoItems.forEach(item => {
+                const button = item.querySelector('button');
+                if (button) {
+                    const repoName = button.textContent.toLowerCase();
+                    if (repoName.includes(searchTerm)) {
+                        item.style.display = 'flex';
+                    } else {
+                        item.style.display = 'none';
+                    }
+                }
+            });
+        });
 </script>
 </body>
 </html> 

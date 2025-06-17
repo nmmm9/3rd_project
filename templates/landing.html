@@ -146,9 +146,102 @@
       opacity: 1;
       transform: scale(1);
     }
+
+    /* 파티클 시스템 스타일 */
+    .particles-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    .particle {
+      position: absolute;
+      color: rgba(255, 255, 255, 0.7);
+      font-family: 'Courier New', monospace;
+      font-size: 16px;
+      font-weight: bold;
+      animation: float 20s infinite linear;
+      pointer-events: none;
+      text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+    }
+
+    .binary-particle {
+      color: rgba(39, 147, 206, 0.8);
+      font-size: 18px;
+      text-shadow: 0 0 15px rgba(39, 147, 206, 0.5);
+    }
+
+    @keyframes float {
+      0% {
+        transform: translateY(0) rotate(0deg) translateX(0px);
+        opacity: 0;
+      }
+      10% {
+        opacity: 1;
+      }
+      50% {
+        transform: translateY(-50vh) rotate(180deg) translateX(30px);
+        opacity: 0.8;
+      }
+      90% {
+        opacity: 0.6;
+      }
+      100% {
+        transform: translateY(-100vh) rotate(360deg) translateX(-30px);
+        opacity: 0;
+      }
+    }
+
+    /* 마우스 커서 효과 */
+    .cursor-glow {
+      position: fixed;
+      width: 20px;
+      height: 20px;
+      background: radial-gradient(circle, rgba(39, 147, 206, 0.8) 0%, rgba(39, 147, 206, 0.4) 30%, transparent 70%);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9999;
+      mix-blend-mode: screen;
+      transition: transform 0.1s ease-out;
+    }
+
+    .cursor-trail {
+      position: fixed;
+      width: 4px;
+      height: 4px;
+      background: rgba(39, 147, 206, 0.6);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9998;
+      transition: all 0.3s ease-out;
+    }
+
+    /* 타이핑 효과 스타일 */
+    .typing-cursor {
+      display: inline-block;
+      background-color: #2793ce;
+      width: 3px;
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
   </style>
 </head>
 <body>
+
+<!-- 파티클 시스템 -->
+<div class="particles-container" id="particles"></div>
+
+<!-- 마우스 커서 효과 -->
+<div class="cursor-glow" id="cursorGlow"></div>
 
 <header id="main-header" class="p-3 flex items-center justify-between" style="height: 100px; background-color: transparent; position: fixed; top: 0; left: 0; width: 100%; z-index: 1000;">
   <div class="flex items-center">
@@ -168,9 +261,9 @@
 
 <div class="hero">
   <div class="reveal-text" id="heroText">
-    <h1 style="font-size: 2.8rem; font-weight: bold; margin-bottom: 1rem; line-height: 1.2;">개발자와 AI의 새로운 협업 방식</h1>
-    <p style="font-size: 1.2rem; color: #d1d5db;">코드 리뷰, 리팩토링, 문서화까지 하나의 챗봇으로 빠르고 정확하게</p>
-    <a href="/login"><button class="btn">GET STARTED WITH GITHUB</button></a>
+    <h1 id="typingTitle" style="font-size: 2.8rem; font-weight: bold; margin-bottom: 1rem; line-height: 1.2; min-height: 3.4rem;"></h1>
+    <p id="typingSubtitle" style="font-size: 1.2rem; color: #d1d5db; min-height: 1.5rem;"></p>
+    <a href="/login"><button class="btn" id="startButton" style="opacity: 0; transition: opacity 0.5s ease;">GET STARTED WITH GITHUB</button></a>
   </div>
 </div>
 
@@ -216,20 +309,36 @@
     </video>
   `,
     test: `
-      <h2>Test</h2>
-      <ul>
-        <li>✅ Unit Tests — Passed</li>
-        <li>✅ Integration Tests — Passed</li>
-        <li>✅ E2E Tests — Passed</li>
-      </ul>
+      <video 
+        src="/static/2.mp4" 
+        controls 
+        autoplay 
+        muted 
+        loop 
+        style="
+          width: 100%;
+          height: auto;
+          max-height: 60vh;
+          object-fit: contain;
+          border-radius: 12px;
+          box-shadow: 0 0 20px rgba(0,0,0,0.3);">
+      </video>
     `,
     publish: `
-      <h2>Publish</h2>
-      <ul>
-        <li>🟡 Publish Linux — Waiting for approval</li>
-        <li>🟡 Publish macOS — Waiting for approval</li>
-        <li>🟡 Publish Windows — Waiting for approval</li>
-      </ul>
+      <video 
+        src="/static/3.mp4" 
+        controls 
+        autoplay 
+        muted 
+        loop 
+        style="
+          width: 100%;
+          height: auto;
+          max-height: 60vh;
+          object-fit: contain;
+          border-radius: 12px;
+          box-shadow: 0 0 20px rgba(0,0,0,0.3);">
+      </video>
     `
   };
 
@@ -294,6 +403,208 @@
   }, { threshold: 0.5 });
 
   observer.observe(heroText);
+
+  // ✅ 파티클 시스템 구현 (개선된 버전)
+  class ParticleSystem {
+    constructor() {
+      this.container = document.getElementById('particles');
+      this.particles = [];
+      this.codeSymbols = ['{', '}', '(', ')', '[', ']', '<', '>', '/', '*', '+', '-', '=', ';', ':', '.', ',', 'if', 'for', 'var', 'let', 'const'];
+      this.binarySymbols = ['0', '1', '01', '10', '101', '010'];
+      
+      // 디버깅 로그
+      console.log('파티클 시스템 초기화 중...');
+      console.log('파티클 컨테이너:', this.container);
+      
+      if (!this.container) {
+        console.error('파티클 컨테이너를 찾을 수 없습니다!');
+        return;
+      }
+      
+      this.init();
+    }
+
+    init() {
+      console.log('파티클 생성 시작...');
+      
+      // 초기 파티클 생성
+      for (let i = 0; i < 30; i++) {
+        this.createParticle();
+      }
+      
+      console.log(`${this.particles.length}개의 파티클이 생성되었습니다.`);
+      
+      // 주기적으로 새 파티클 생성
+      setInterval(() => {
+        if (this.particles.length < 50) {
+          this.createParticle();
+        }
+      }, 800);
+    }
+
+    createParticle() {
+      if (!this.container) return;
+      
+      const particle = document.createElement('div');
+      const isBinary = Math.random() > 0.5;
+      particle.className = isBinary ? 'particle binary-particle' : 'particle';
+      
+      // 파티클 내용 설정
+      const symbols = isBinary ? this.binarySymbols : this.codeSymbols;
+      particle.textContent = symbols[Math.floor(Math.random() * symbols.length)];
+      
+      // 위치 설정 (화면 전체에 분산)
+      const leftPosition = Math.random() * 100; // 0% ~ 100%
+      particle.style.left = leftPosition + '%';
+      particle.style.bottom = '-50px'; // 화면 하단 아래에서 시작
+      
+      // 애니메이션 설정
+      particle.style.animationDelay = Math.random() * 3 + 's';
+      particle.style.animationDuration = (12 + Math.random() * 8) + 's';
+      
+      // 크기와 투명도 설정
+      const scale = isBinary ? (1.0 + Math.random() * 0.5) : (0.8 + Math.random() * 0.7);
+      particle.style.fontSize = (isBinary ? 18 : 16) * scale + 'px';
+      particle.style.opacity = 0.4 + Math.random() * 0.4;
+      
+      // 색상 강화
+      if (isBinary) {
+        particle.style.color = `rgba(39, 147, 206, ${0.6 + Math.random() * 0.4})`;
+        particle.style.textShadow = '0 0 10px rgba(39, 147, 206, 0.8)';
+      } else {
+        particle.style.color = `rgba(255, 255, 255, ${0.5 + Math.random() * 0.3})`;
+        particle.style.textShadow = '0 0 8px rgba(255, 255, 255, 0.5)';
+      }
+      
+      // 컨테이너에 추가
+      this.container.appendChild(particle);
+      this.particles.push(particle);
+      
+      // 애니메이션 완료 후 제거
+      setTimeout(() => {
+        if (particle.parentNode) {
+          particle.parentNode.removeChild(particle);
+          this.particles = this.particles.filter(p => p !== particle);
+        }
+      }, 20000);
+    }
+  }
+
+  // ✅ 마우스 커서 효과 구현
+  class CursorEffect {
+    constructor() {
+      this.cursorGlow = document.getElementById('cursorGlow');
+      this.trails = [];
+      this.maxTrails = 8;
+      this.init();
+    }
+
+    init() {
+      // 커서 트레일 요소들 생성
+      for (let i = 0; i < this.maxTrails; i++) {
+        const trail = document.createElement('div');
+        trail.className = 'cursor-trail';
+        trail.style.opacity = (this.maxTrails - i) / this.maxTrails * 0.6;
+        trail.style.transform = 'scale(' + (this.maxTrails - i) / this.maxTrails + ')';
+        document.body.appendChild(trail);
+        this.trails.push({
+          element: trail,
+          x: 0,
+          y: 0
+        });
+      }
+
+      // 마우스 이벤트 리스너
+      document.addEventListener('mousemove', (e) => {
+        this.updateCursor(e.clientX, e.clientY);
+      });
+
+      document.addEventListener('mouseenter', () => {
+        this.cursorGlow.style.opacity = '1';
+        this.trails.forEach(trail => trail.element.style.opacity = trail.element.style.opacity);
+      });
+
+      document.addEventListener('mouseleave', () => {
+        this.cursorGlow.style.opacity = '0';
+        this.trails.forEach(trail => trail.element.style.opacity = '0');
+      });
+    }
+
+    updateCursor(x, y) {
+      // 메인 커서 글로우 업데이트
+      this.cursorGlow.style.left = (x - 10) + 'px';
+      this.cursorGlow.style.top = (y - 10) + 'px';
+
+      // 트레일 업데이트 (지연 효과)
+      this.trails.forEach((trail, index) => {
+        setTimeout(() => {
+          trail.x = x;
+          trail.y = y;
+          trail.element.style.left = (trail.x - 2) + 'px';
+          trail.element.style.top = (trail.y - 2) + 'px';
+        }, index * 50);
+      });
+    }
+  }
+
+  // ✅ 타이핑 효과 구현
+  class TypingEffect {
+    constructor() {
+      this.titleElement = document.getElementById('typingTitle');
+      this.subtitleElement = document.getElementById('typingSubtitle');
+      this.buttonElement = document.getElementById('startButton');
+      
+      this.titleText = '개발자와 AI의 새로운 협업 방식';
+      this.subtitleText = '코드 리뷰, 리팩토링, 문서화까지 하나의 챗봇으로 빠르고 정확하게';
+      
+      this.titleIndex = 0;
+      this.subtitleIndex = 0;
+      this.titleSpeed = 100; // 타이핑 속도 (ms)
+      this.subtitleSpeed = 50;
+      
+      this.init();
+    }
+
+    init() {
+      // 페이지 로드 후 1초 뒤에 타이핑 시작
+      setTimeout(() => {
+        this.typeTitle();
+      }, 1000);
+    }
+
+    typeTitle() {
+      if (this.titleIndex < this.titleText.length) {
+        this.titleElement.innerHTML = this.titleText.substring(0, this.titleIndex + 1) + '<span class="typing-cursor">&nbsp;</span>';
+        this.titleIndex++;
+        setTimeout(() => this.typeTitle(), this.titleSpeed);
+      } else {
+        // 제목 타이핑 완료 후 커서 제거하고 부제목 시작
+        this.titleElement.innerHTML = this.titleText;
+        setTimeout(() => this.typeSubtitle(), 500);
+      }
+    }
+
+    typeSubtitle() {
+      if (this.subtitleIndex < this.subtitleText.length) {
+        this.subtitleElement.innerHTML = this.subtitleText.substring(0, this.subtitleIndex + 1) + '<span class="typing-cursor">&nbsp;</span>';
+        this.subtitleIndex++;
+        setTimeout(() => this.typeSubtitle(), this.subtitleSpeed);
+      } else {
+        // 부제목 타이핑 완료 후 커서 제거하고 버튼 표시
+        this.subtitleElement.innerHTML = this.subtitleText;
+        setTimeout(() => {
+          this.buttonElement.style.opacity = '1';
+        }, 500);
+      }
+    }
+  }
+
+  // ✅ 시스템 초기화
+  document.addEventListener('DOMContentLoaded', () => {
+    new ParticleSystem();
+    new CursorEffect();
+    new TypingEffect();
+  });
 </script>
 
 </body>

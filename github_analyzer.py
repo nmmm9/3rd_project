@@ -10,6 +10,9 @@ LangChain Document로 변환한 후 ChromaDB에 임베딩하여 저장하는 기
 
 주요 함수:
     - analyze_repository: GitHub 저장소를 분석하고 임베딩하는 메인 함수
+    - get_repository_branches: GitHub 저장소의 브랜치 목록을 가져오는 함수
+    - get_repository_file_tree: GitHub 저장소의 특정 브랜치 파일 구조를 가져오는 함수
+    - get_file_content: GitHub 저장소의 특정 파일 내용을 가져오는 함수
 """
 
 import requests
@@ -35,8 +38,10 @@ CHUNK_SIZE = 500  # 텍스트 청크 크기
 GITHUB_TOKEN = "GITHUB_TOKEN"  # 환경 변수 키 이름
 KEY_FILE = ".key"  # 암호화 키 파일
 
-# ChromaDB 기본 클라이언트 (로컬)
-chroma_client = chromadb.Client()
+# ChromaDB 영구 저장소 클라이언트
+REPO_DB_PATH = "./repo_analysis_db"
+os.makedirs(REPO_DB_PATH, exist_ok=True)
+chroma_client = chromadb.PersistentClient(path=REPO_DB_PATH)
 
 def analyze_repository(repo_url: str, token: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -89,6 +94,174 @@ def analyze_repository(repo_url: str, token: Optional[str] = None, session_id: O
     except Exception as e:
         print(f"[오류] 저장소 분석 실패: {e}")
         raise
+
+def get_repository_branches(repo_url: str, token: Optional[str] = None) -> Dict[str, Any]:
+    """
+    GitHub 저장소의 브랜치 목록을 가져옵니다.
+    
+    Args:
+        repo_url (str): GitHub 저장소 URL
+        token (Optional[str]): GitHub 개인 액세스 토큰
+        
+    Returns:
+        Dict[str, Any]: 브랜치 목록 또는 에러 정보
+    """
+    try:
+        # URL에서 owner, repo 추출
+        fetcher = GitHubRepositoryFetcher(repo_url, token)
+        owner, repo = fetcher.owner, fetcher.repo
+        
+        # GitHub API로 브랜치 목록 가져오기
+        url = f"https://api.github.com/repos/{owner}/{repo}/branches"
+        headers = {'Authorization': f'token {token}'} if token else {}
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            branches = response.json()
+            return {
+                'success': True,
+                'branches': [{'name': branch['name'], 'sha': branch['commit']['sha']} for branch in branches]
+            }
+        else:
+            return {
+                'success': False,
+                'error': f'브랜치 목록을 가져올 수 없습니다: {response.status_code}',
+                'message': response.text
+            }
+            
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'브랜치 목록 조회 중 오류 발생: {str(e)}'
+        }
+
+def get_repository_file_tree(repo_url: str, branch: str = 'main', token: Optional[str] = None) -> Dict[str, Any]:
+    """
+    GitHub 저장소의 특정 브랜치 파일 구조를 가져옵니다.
+    
+    Args:
+        repo_url (str): GitHub 저장소 URL
+        branch (str): 브랜치 이름 (기본값: 'main')
+        token (Optional[str]): GitHub 개인 액세스 토큰
+        
+    Returns:
+        Dict[str, Any]: 파일 구조 또는 에러 정보
+    """
+    try:
+        # URL에서 owner, repo 추출
+        fetcher = GitHubRepositoryFetcher(repo_url, token)
+        owner, repo = fetcher.owner, fetcher.repo
+        
+        # GitHub API로 파일 트리 가져오기
+        url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+        headers = {'Authorization': f'token {token}'} if token else {}
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            tree_data = response.json()
+            
+            # 파일과 디렉토리를 구분하여 정리
+            files = []
+            directories = []
+            
+            for item in tree_data.get('tree', []):
+                if item['type'] == 'blob':  # 파일
+                    files.append({
+                        'path': item['path'],
+                        'sha': item['sha'],
+                        'size': item.get('size', 0),
+                        'type': 'file'
+                    })
+                elif item['type'] == 'tree':  # 디렉토리
+                    directories.append({
+                        'path': item['path'],
+                        'sha': item['sha'],
+                        'type': 'directory'
+                    })
+            
+            return {
+                'success': True,
+                'files': files,
+                'directories': directories,
+                'total_files': len(files),
+                'total_directories': len(directories)
+            }
+        else:
+            return {
+                'success': False,
+                'error': f'파일 구조를 가져올 수 없습니다: {response.status_code}',
+                'message': response.text
+            }
+            
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'파일 구조 조회 중 오류 발생: {str(e)}'
+        }
+
+def get_file_content(repo_url: str, file_path: str, branch: str = 'main', token: Optional[str] = None) -> Dict[str, Any]:
+    """
+    GitHub 저장소의 특정 파일 내용을 가져옵니다.
+    
+    Args:
+        repo_url (str): GitHub 저장소 URL
+        file_path (str): 파일 경로
+        branch (str): 브랜치 이름 (기본값: 'main')
+        token (Optional[str]): GitHub 개인 액세스 토큰
+        
+    Returns:
+        Dict[str, Any]: 파일 내용 또는 에러 정보
+    """
+    try:
+        # URL에서 owner, repo 추출
+        fetcher = GitHubRepositoryFetcher(repo_url, token)
+        owner, repo = fetcher.owner, fetcher.repo
+        
+        # GitHub API로 파일 내용 가져오기
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={branch}"
+        headers = {'Authorization': f'token {token}'} if token else {}
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            file_data = response.json()
+            
+            # Base64로 인코딩된 내용을 디코딩
+            if file_data.get('encoding') == 'base64':
+                try:
+                    content = base64.b64decode(file_data['content']).decode('utf-8')
+                except UnicodeDecodeError:
+                    # 바이너리 파일인 경우
+                    return {
+                        'success': False,
+                        'error': '바이너리 파일은 표시할 수 없습니다.',
+                        'is_binary': True
+                    }
+            else:
+                content = file_data.get('content', '')
+            
+            return {
+                'success': True,
+                'content': content,
+                'size': file_data.get('size', 0),
+                'sha': file_data.get('sha', ''),
+                'path': file_path,
+                'encoding': file_data.get('encoding', 'utf-8')
+            }
+        else:
+            return {
+                'success': False,
+                'error': f'파일 내용을 가져올 수 없습니다: {response.status_code}',
+                'message': response.text
+            }
+            
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'파일 내용 조회 중 오류 발생: {str(e)}'
+        }
 
 class GitHubRepositoryFetcher:
     """
@@ -1074,7 +1247,7 @@ class RepositoryEmbedder:
                 try:
                     emb_resp = await client.embeddings.create(
                         input=chunk,
-                        model="text-embedding-3-small"
+                        model="text-embedding-3-large"
                     )
                     embedding = emb_resp.data[0].embedding
                 except Exception as e:
