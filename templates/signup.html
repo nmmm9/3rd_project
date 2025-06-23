@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign Up</title>
+  <!-- Three.js 라이브러리 추가 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <style>
     body {
       background-color: #111827;
@@ -21,12 +24,32 @@
       border-radius: 12px;
       background-color: #111827;
       padding: 2rem;
+      position: relative;
+      z-index: 10;
     }
 
     .title {
       text-align: center;
       font-size: 1.5rem;
       font-weight: 700;
+      margin-top: 3rem;
+    }
+
+    /* 3D 캐릭터 컨테이너 */
+    .character-container {
+      position: absolute;
+      top: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 140px;
+      height: 140px;
+      z-index: 5;
+      overflow: visible;
+    }
+
+    #character-canvas {
+      width: 100%;
+      height: 100%;
     }
 
     .form {
@@ -132,6 +155,10 @@
 </head>
 <body>
   <div class="form-container">
+    <!-- 3D 캐릭터 -->
+    <div class="character-container">
+      <canvas id="character-canvas"></canvas>
+    </div>
     <p class="title">Sign Up</p>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -167,12 +194,249 @@
   {% if signup_success %}
   <div class="modal">
     <div class="modal-content">
+      <img src="/static/success.jpg" alt="Success" style="width: 100px; height: 100px; object-fit: cover; border-radius: 50%; margin-bottom: 1rem;">
       <h1>회원가입 성공</h1>
       <p>Your account has been created successfully!</p>
       <a href="/login"><button class="button">확인</button></a>
     </div>
   </div>
   {% endif %}
+
+  <script>
+    // 3D 캐릭터 클래스
+    class SignupCharacter {
+      constructor() {
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+        this.renderer = new THREE.WebGLRenderer({ 
+          canvas: document.getElementById('character-canvas'),
+          alpha: true,
+          antialias: true
+        });
+        
+        this.character = null;
+        this.loader = new THREE.GLTFLoader();
+        this.currentInput = null;
+        this.mixer = null;
+        this.actions = {};
+        this.isPasswordField = false;
+        
+        this.init();
+      }
+
+      init() {
+        // 렌더러 설정
+        this.renderer.setSize(140, 140);
+        this.renderer.setClearColor(0x000000, 0);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        // 카메라 위치
+        this.camera.position.set(0, 0, 3.5);
+        this.camera.lookAt(0, 0, 0);
+
+        // 조명 설정
+        this.setupLights();
+
+        // 캐릭터 로드
+        this.loadCharacter();
+
+        // 입력 필드 이벤트 리스너
+        this.setupInputListeners();
+
+        // 애니메이션 시작
+        this.animate();
+      }
+
+      setupLights() {
+        // 환경광
+        const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+        this.scene.add(ambientLight);
+
+        // 방향광
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
+        directionalLight.position.set(2, 2, 2);
+        this.scene.add(directionalLight);
+
+        // 포인트 라이트 (파란색 강조)
+        const pointLight = new THREE.PointLight(0x478df5, 1, 10);
+        pointLight.position.set(0, 1, 2);
+        this.scene.add(pointLight);
+      }
+
+      loadCharacter() {
+        this.loader.load(
+          '/static/a.glb',
+          (gltf) => {
+            this.character = gltf.scene;
+            this.character.scale.set(0.8, 0.8, 0.8);
+            this.character.position.set(0, -0.5, 0);
+            
+            // 애니메이션 설정
+            if (gltf.animations && gltf.animations.length > 0) {
+              this.mixer = new THREE.AnimationMixer(this.character);
+              
+              gltf.animations.forEach((clip, index) => {
+                const action = this.mixer.clipAction(clip);
+                this.actions[index] = action;
+                
+                if (index === 0) {
+                  // 기본 애니메이션 (눈 뜬 상태)
+                  action.play();
+                }
+              });
+            }
+            
+            // 그림자 설정
+            this.character.traverse((child) => {
+              if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+              }
+            });
+
+            this.scene.add(this.character);
+          },
+          (progress) => {
+            console.log('Loading character:', (progress.loaded / progress.total * 100) + '%');
+          },
+          (error) => {
+            console.error('Error loading character:', error);
+          }
+        );
+      }
+
+      setupInputListeners() {
+        const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"]');
+        
+        inputs.forEach(input => {
+          input.addEventListener('focus', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+
+          input.addEventListener('blur', () => {
+            this.currentInput = null;
+            this.isPasswordField = false;
+            this.switchToEyesOpen();
+          });
+
+          // 실시간 커서 위치 추적을 위한 이벤트들
+          input.addEventListener('input', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+
+          input.addEventListener('keyup', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+
+          input.addEventListener('click', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+        });
+      }
+
+      checkPasswordField() {
+        if (this.currentInput) {
+          const isPassword = this.currentInput.type === 'password';
+          if (isPassword && !this.isPasswordField) {
+            this.isPasswordField = true;
+            this.switchToEyesClosed();
+          } else if (!isPassword && this.isPasswordField) {
+            this.isPasswordField = false;
+            this.switchToEyesOpen();
+          }
+        }
+      }
+
+      switchToEyesOpen() {
+        if (this.actions[0] && this.actions[1]) {
+          this.actions[1].stop();
+          this.actions[0].reset().play();
+        }
+      }
+
+      switchToEyesClosed() {
+        if (this.actions[0] && this.actions[1]) {
+          this.actions[0].stop();
+          this.actions[1].reset().play();
+        }
+      }
+
+      animate() {
+        requestAnimationFrame(() => this.animate());
+
+        if (this.character) {
+          const time = Date.now() * 0.001;
+          
+          // 애니메이션 믹서 업데이트
+          if (this.mixer) {
+            this.mixer.update(0.016); // 60fps 기준
+          }
+          
+          // 기본 부유 효과
+          this.character.position.y = -0.5 + Math.sin(time * 2) * 0.05;
+          
+          if (this.currentInput) {
+            // 포커스된 입력 필드 쪽으로 고개 돌리기 (실시간 추적)
+            const inputRect = this.currentInput.getBoundingClientRect();
+            const containerRect = document.querySelector('.character-container').getBoundingClientRect();
+            
+            // 타이핑 위치 추적 (커서 위치 계산)
+            let cursorX = inputRect.left;
+            if (this.currentInput.value) {
+              // 입력된 텍스트 길이에 따른 커서 위치 추정
+              const textWidth = this.currentInput.value.length * 8; // 대략적인 글자 폭
+              cursorX = inputRect.left + Math.min(textWidth, inputRect.width - 20);
+            }
+            
+            // 입력 필드의 위치 계산 (커서 위치 기반)
+            const inputCenterY = inputRect.top + inputRect.height / 2;
+            
+            // 캐릭터 컨테이너의 중앙 위치 계산
+            const containerCenterX = containerRect.left + containerRect.width / 2;
+            const containerCenterY = containerRect.top + containerRect.height / 2;
+            
+            // 상대적 위치 계산
+            const relativeX = cursorX - containerCenterX;
+            const relativeY = inputCenterY - containerCenterY;
+            
+            // 거리에 따른 시선 각도 조정 (더 자연스럽게)
+            const maxDistanceX = 150; // X축 최대 감지 거리
+            const maxDistanceY = 100; // Y축 최대 감지 거리
+            const normalizedX = Math.max(-1, Math.min(1, relativeX / maxDistanceX));
+            const normalizedY = Math.max(-1, Math.min(1, relativeY / maxDistanceY));
+            
+            // 부드러운 시선 이동 (lerp 적용)
+            const lerpFactor = 0.1;
+            const targetRotationY = normalizedX * 0.4;
+            const targetRotationX = normalizedY * 0.3; // 방향 수정 (- 제거)
+            
+            this.character.rotation.y += (targetRotationY - this.character.rotation.y) * lerpFactor;
+            this.character.rotation.x += (targetRotationX - this.character.rotation.x) * lerpFactor;
+          } else {
+            // 기본 상태: 부드럽게 정면으로 돌아가기
+            const lerpFactor = 0.05;
+            this.character.rotation.y += (0 - this.character.rotation.y) * lerpFactor;
+            this.character.rotation.x += (0 - this.character.rotation.x) * lerpFactor;
+          }
+          
+          // 약간의 자연스러운 움직임
+          this.character.rotation.z = Math.sin(time * 1.5) * 0.02;
+        }
+
+        this.renderer.render(this.scene, this.camera);
+      }
+    }
+
+    // 페이지 로드 후 캐릭터 초기화
+    document.addEventListener('DOMContentLoaded', () => {
+      new SignupCharacter();
+    });
+  </script>
 
 </body>
 </html>
