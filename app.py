@@ -1021,6 +1021,104 @@ def delete_chat_session():
         'next_session_id': next_session_id
     })
 
+@app.route('/export-chat-md', methods=['POST'])
+def export_chat_md():
+    """채팅 세션을 마크다운 파일로 추출"""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'status': '에러', 'error': '세션 ID가 필요합니다.'}), 400
+        
+        # 세션 정보 조회
+        session_info = db.get_session_by_id(session_id)
+        if not session_info:
+            return jsonify({'status': '에러', 'error': '해당 세션을 찾을 수 없습니다.'}), 404
+        
+        # 현재 사용자의 세션인지 확인
+        if session_info['user_id'] != session.get('user_id'):
+            return jsonify({'status': '에러', 'error': '권한이 없습니다.'}), 403
+        
+        # 채팅 기록 조회
+        chat_history = db.get_chat_history(session_id)
+        
+        if not chat_history:
+            return jsonify({'status': '에러', 'error': '채팅 기록이 없습니다.'}), 400
+        
+        # MD 파일 내용 생성
+        md_content = generate_chat_md(chat_history, session_info)
+        
+        # 파일 응답 생성
+        response = Response(
+            md_content,
+            mimetype='text/markdown',
+            headers={
+                'Content-Disposition': f'attachment; filename=chat-session-{session_id}.md',
+                'Content-Type': 'text/markdown; charset=utf-8'
+            }
+        )
+        
+        return response
+    
+    except Exception as e:
+        print(f"[ERROR] MD 추출 오류: {str(e)}")
+        return jsonify({'status': '에러', 'error': '서버 오류가 발생했습니다.'}), 500
+
+def generate_chat_md(chat_history, session_info):
+    """채팅 기록을 마크다운 형식으로 변환"""
+    import datetime
+    
+    # 헤더 정보
+    created_at = session_info.get('created_at', '')
+    repo_url = session_info.get('repo_url', '알 수 없음')
+    
+    md_lines = [
+        f"# 채팅 세션 기록",
+        f"",
+        f"**저장소:** {repo_url}",
+        f"**생성일:** {created_at}",
+        f"**세션 ID:** {session_info.get('session_id', '')}",
+        f"",
+        f"---",
+        f""
+    ]
+    
+    # 채팅 내역 추가
+    message_pair_count = 0
+    for message in chat_history:
+        role = message.get('role', 'unknown')
+        content = message.get('content', '')
+        timestamp = message.get('timestamp', '')
+        
+        if role == 'user':
+            message_pair_count += 1
+            md_lines.extend([
+                f"## 질문 #{message_pair_count}",
+                f"",
+                f"**시간:** {timestamp}",
+                f"",
+                content,
+                f"",
+            ])
+        elif role == 'assistant':
+            md_lines.extend([
+                f"## 답변 #{message_pair_count}",
+                f"",
+                f"**시간:** {timestamp}",
+                f"",
+                content,
+                f"",
+                f"---",
+                f""
+            ])
+    
+    return '\n'.join(md_lines)
+
 @app.route('/api/branches/<session_id>')
 def get_branches(session_id):
     """세션의 레포지토리 브랜치 목록을 반환합니다."""
