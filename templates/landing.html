@@ -6,6 +6,9 @@
   <title>github ai 코드 분석 챗봇</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+  <!-- Three.js 라이브러리 추가 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -29,16 +32,40 @@
       padding-top: 160px;
     }
 
-    .hero-image {
+    /* 3D 컨테이너 스타일 */
+    .hero-3d-container {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      height: 80vh;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* 배경 이미지 스타일 */
+    .background-image {
       position: fixed;
       bottom: 0;
       left: 50%;
       transform: translateX(-50%) scale(1.5);
-      z-index: 1;
+      z-index: 0;
       max-width: 100%;
       max-height: 80vh;
       object-fit: contain;
       pointer-events: none;
+      opacity: 0.8;
+    }
+
+    /* 3D 캔버스 스타일 */
+    #three-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
     }
 
     .btn {
@@ -83,7 +110,7 @@
       transition: none;
       z-index: 2;
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
-      overflow: hidden; /* 🔥 비디오가 삐져나오지 않도록 */
+      overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -135,7 +162,6 @@
       background: rgba(0, 0, 0, 0.6);
     }
 
-    /* ✅ 스케일+페이드 애니메이션 + 느리게 */
     .reveal-text {
       opacity: 0;
       transform: scale(0.95);
@@ -233,6 +259,25 @@
       0%, 50% { opacity: 1; }
       51%, 100% { opacity: 0; }
     }
+
+    /* 3D 객체 등장 애니메이션 */
+    @keyframes rise-and-rotate {
+      0% {
+        transform: translateY(200px) rotateY(0deg) rotateX(0deg);
+        opacity: 0;
+      }
+      50% {
+        opacity: 0.7;
+      }
+      100% {
+        transform: translateY(0px) rotateY(360deg) rotateX(180deg);
+        opacity: 1;
+      }
+    }
+
+    .object-3d {
+      animation: rise-and-rotate 3s ease-out forwards;
+    }
   </style>
 </head>
 <body>
@@ -267,7 +312,13 @@
   </div>
 </div>
 
-<img src="../static/a.png" alt="Hero Image" class="hero-image">
+<!-- 배경 이미지 -->
+<img src="/static/back.png" alt="Background" class="background-image">
+
+<!-- 3D 객체 컨테이너 -->
+<div class="hero-3d-container">
+  <canvas id="three-canvas"></canvas>
+</div>
 
 <div class="overlay-box" id="overlay">
   <div class="content-area" id="content">
@@ -287,6 +338,237 @@
 </div>
 
 <script>
+  // 3D Scene 설정
+  class ThreeJSScene {
+    constructor() {
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      this.renderer = new THREE.WebGLRenderer({ 
+        canvas: document.getElementById('three-canvas'),
+        alpha: true,
+        antialias: true
+      });
+      
+      this.objects = [];
+      this.loader = new THREE.GLTFLoader();
+      
+      this.init();
+    }
+
+    init() {
+      // 렌더러 설정
+      this.renderer.setSize(window.innerWidth, window.innerHeight * 0.8);
+      this.renderer.setClearColor(0x000000, 0); // 투명 배경
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      // 카메라 위치 설정
+      this.camera.position.set(0, 2, 8);
+      this.camera.lookAt(0, 0, 0);
+
+      // 조명 설정
+      this.setupLights();
+
+      // 3D 객체 로드
+      this.loadObjects();
+
+      // 애니메이션 시작
+      this.animate();
+
+      // 윈도우 리사이즈 이벤트
+      window.addEventListener('resize', () => this.onWindowResize());
+    }
+
+    setupLights() {
+      // 환경광 (더 밝게)
+      const ambientLight = new THREE.AmbientLight(0x808080, 1.2);
+      this.scene.add(ambientLight);
+
+      // 방향광 (더 밝게)
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.8);
+      directionalLight.position.set(10, 10, 5);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      this.scene.add(directionalLight);
+
+      // 추가 방향광 (반대편에서)
+      const directionalLight2 = new THREE.DirectionalLight(0xffffff, 1.2);
+      directionalLight2.position.set(-10, 8, -5);
+      this.scene.add(directionalLight2);
+
+      // 포인트 라이트 (파란색 강조, 더 밝게)
+      const pointLight = new THREE.PointLight(0x2793ce, 1.5, 100);
+      pointLight.position.set(0, 5, 0);
+      this.scene.add(pointLight);
+
+      // 추가 포인트 라이트 (흰색)
+      const pointLight2 = new THREE.PointLight(0xffffff, 1.0, 80);
+      pointLight2.position.set(5, 3, 5);
+      this.scene.add(pointLight2);
+    }
+
+         loadObjects() {
+             const objectPaths = [
+        { path: '/static/a.glb', position: [-2.5, -1.5, 0.5], delay: 0 },
+        { path: '/static/b.glb', position: [0, -0.5, -0.3], delay: 0.5 },
+        { path: '/static/c.glb', position: [2.5, -2, 0.3], delay: 1.0 }
+      ];
+
+      objectPaths.forEach((objData, index) => {
+                 this.loader.load(
+           objData.path,
+           (gltf) => {
+             const object = gltf.scene;
+             
+                                       // 초기 위치 설정 (아래쪽에서 시작, 처음엔 보이지 않음)
+             const startX = objData.position[0];
+             const startY = objData.position[1] - 6;
+             const startZ = objData.position[2];
+             
+             object.position.set(startX, startY, startZ);
+             object.scale.set(0.7, 0.7, 0.7);
+             object.visible = false; // 처음엔 보이지 않음
+             
+             // 그림자 설정
+             object.traverse((child) => {
+               if (child.isMesh) {
+                 child.castShadow = true;
+                 child.receiveShadow = true;
+               }
+             });
+
+             this.scene.add(object);
+             this.objects.push({
+               mesh: object,
+               startPosition: [startX, startY, startZ],
+               targetPosition: objData.position,
+               currentPosition: [startX, startY, startZ],
+               rotationSpeed: 0.02 + Math.random() * 0.01,
+               delay: objData.delay,
+               startTime: Date.now() + (objData.delay * 1000),
+               isAnimating: false,
+               hasAppeared: false,
+               floatOffset: Math.random() * Math.PI * 2, // 각각 다른 부유 패턴
+               animationProgress: 0 // 애니메이션 진행도 (0~1)
+             });
+           },
+          (progress) => {
+            console.log(`Loading ${objData.path}: ${(progress.loaded / progress.total * 100)}%`);
+          },
+          (error) => {
+            console.error(`Error loading ${objData.path}:`, error);
+          }
+        );
+      });
+    }
+
+    animate() {
+      requestAnimationFrame(() => this.animate());
+
+      const currentTime = Date.now();
+
+             // 각 객체 애니메이션 업데이트
+       this.objects.forEach((obj) => {
+         // 등장 애니메이션 시작
+         if (!obj.isAnimating && currentTime >= obj.startTime) {
+           obj.isAnimating = true;
+           obj.mesh.visible = true; // 등장 시작할 때 보이게 함
+         }
+
+         if (obj.isAnimating) {
+           // 등장 애니메이션 (모든 축에서 부드럽게 이동)
+           if (obj.animationProgress < 1) {
+             obj.animationProgress += 0.008; // 애니메이션 속도 조정
+             
+             // 더 부드러운 이징 함수 (cubic-bezier 스타일)
+             const t = obj.animationProgress;
+             const easeProgress = t * t * (3 - 2 * t); // smoothstep 함수
+             
+             // 모든 축에서 보간
+             const currentX = obj.startPosition[0] + (obj.targetPosition[0] - obj.startPosition[0]) * easeProgress;
+             const currentY = obj.startPosition[1] + (obj.targetPosition[1] - obj.startPosition[1]) * easeProgress;
+             const currentZ = obj.startPosition[2] + (obj.targetPosition[2] - obj.startPosition[2]) * easeProgress;
+             
+             obj.mesh.position.set(currentX, currentY, currentZ);
+             obj.currentPosition = [currentX, currentY, currentZ];
+             
+             // 회전 애니메이션 개선 - 더 자연스러운 감속
+             const rotationEase = Math.pow(1 - easeProgress, 3); // 더 부드러운 감속 곡선
+             const rotationIntensity = rotationEase * 0.6 + 0.05;
+             
+             // 회전 속도를 누적하지 않고 목표 회전값으로 부드럽게 이동
+             if (!obj.targetRotationY) {
+               obj.targetRotationY = obj.mesh.rotation.y + (Math.PI * 2 * (1 + Math.random() * 0.5));
+               obj.targetRotationX = obj.mesh.rotation.x + (Math.PI * (0.5 + Math.random() * 0.3));
+               obj.initialRotationY = obj.mesh.rotation.y;
+               obj.initialRotationX = obj.mesh.rotation.x;
+             }
+             
+             // 회전을 목표값으로 부드럽게 보간
+             const rotationProgress = 1 - rotationEase;
+             obj.mesh.rotation.y = obj.initialRotationY + (obj.targetRotationY - obj.initialRotationY) * rotationProgress;
+             obj.mesh.rotation.x = obj.initialRotationX + (obj.targetRotationX - obj.initialRotationX) * rotationProgress;
+             
+           } else {
+             // 등장 완료
+             if (!obj.hasAppeared) {
+               obj.hasAppeared = true;
+               // 최종 위치 설정
+               obj.mesh.position.set(obj.targetPosition[0], obj.targetPosition[1], obj.targetPosition[2]);
+               
+               // 부유 효과를 위한 기준점 설정
+               obj.floatBasePosition = [...obj.targetPosition];
+               
+               // 정면을 바라보도록 회전 설정 (약간의 개성을 위해 미세한 차이 적용)
+               obj.finalRotationY = Math.random() * 0.2 - 0.1; // -0.1 ~ 0.1 라디안
+               obj.finalRotationX = Math.random() * 0.1 - 0.05; // -0.05 ~ 0.05 라디안
+               obj.finalRotationZ = Math.random() * 0.1 - 0.05; // -0.05 ~ 0.05 라디안
+               
+               // 정면 방향으로 부드럽게 회전하는 애니메이션을 위한 변수
+               obj.rotationTransitionProgress = 0;
+               obj.currentRotationY = obj.mesh.rotation.y;
+               obj.currentRotationX = obj.mesh.rotation.x;
+               obj.currentRotationZ = obj.mesh.rotation.z;
+             }
+             
+             // 정면을 바라보도록 부드럽게 회전 전환
+             if (obj.rotationTransitionProgress < 1) {
+               obj.rotationTransitionProgress += 0.015; // 전환 속도
+               const transitionEase = obj.rotationTransitionProgress * obj.rotationTransitionProgress * (3 - 2 * obj.rotationTransitionProgress);
+               
+               // 현재 회전에서 목표 회전으로 부드럽게 전환
+               obj.mesh.rotation.y = obj.currentRotationY + (obj.finalRotationY - obj.currentRotationY) * transitionEase;
+               obj.mesh.rotation.x = obj.currentRotationX + (obj.finalRotationX - obj.currentRotationX) * transitionEase;
+               obj.mesh.rotation.z = obj.currentRotationZ + (obj.finalRotationZ - obj.currentRotationZ) * transitionEase;
+             } else {
+               // 정면을 바라본 상태에서 매우 미세한 흔들림만 (둥둥 떠있는 느낌)
+               obj.mesh.rotation.y = obj.finalRotationY + Math.sin(currentTime * 0.0005 + obj.floatOffset) * 0.03;
+               obj.mesh.rotation.x = obj.finalRotationX + Math.cos(currentTime * 0.0004 + obj.floatOffset) * 0.02;
+               obj.mesh.rotation.z = obj.finalRotationZ + Math.sin(currentTime * 0.0006 + obj.floatOffset) * 0.02;
+             }
+             
+             // 등장 후 부드러운 부유 효과
+             const floatY = obj.floatBasePosition[1] + Math.sin(currentTime * 0.002 + obj.floatOffset) * 0.25;
+             const floatX = obj.floatBasePosition[0] + Math.cos(currentTime * 0.0015 + obj.floatOffset) * 0.08;
+             const floatZ = obj.floatBasePosition[2] + Math.sin(currentTime * 0.0018 + obj.floatOffset) * 0.08;
+             
+             obj.mesh.position.set(floatX, floatY, floatZ);
+           }
+         }
+       });
+
+      this.renderer.render(this.scene, this.camera);
+    }
+
+    onWindowResize() {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(window.innerWidth, window.innerHeight * 0.8);
+    }
+  }
+
+  // 기존 코드들...
   const overlay = document.getElementById('overlay');
   const buttons = document.getElementById('buttons');
   const content = document.getElementById('content');
@@ -346,7 +628,7 @@
     content.innerHTML = contentMap[tab];
   }
 
-  let overlayInitialized = false; // ✅ 한 번만 실행되도록 제어
+  let overlayInitialized = false;
 
   window.addEventListener('scroll', () => {
     const scrollY = window.scrollY;
@@ -384,19 +666,16 @@
       buttons.style.opacity = 0;
       buttons.classList.remove('active');
 
-      overlayInitialized = false; // 다시 올라가면 초기화돼야 다시 실행됨
+      overlayInitialized = false;
     }
-
-    
   });
 
-  // ✅ 스크롤 올라올 때 재적용 되도록 애니메이션 리셋
   const heroText = document.getElementById('heroText');
   const observer = new IntersectionObserver(entries => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
         heroText.classList.remove('visible');
-        void heroText.offsetWidth; // 트릭: 강제로 reflow
+        void heroText.offsetWidth;
         heroText.classList.add('visible');
       }
     });
@@ -404,7 +683,7 @@
 
   observer.observe(heroText);
 
-  // ✅ 파티클 시스템 구현 (개선된 버전)
+  // 파티클 시스템 구현
   class ParticleSystem {
     constructor() {
       this.container = document.getElementById('particles');
@@ -412,7 +691,6 @@
       this.codeSymbols = ['{', '}', '(', ')', '[', ']', '<', '>', '/', '*', '+', '-', '=', ';', ':', '.', ',', 'if', 'for', 'var', 'let', 'const'];
       this.binarySymbols = ['0', '1', '01', '10', '101', '010'];
       
-      // 디버깅 로그
       console.log('파티클 시스템 초기화 중...');
       console.log('파티클 컨테이너:', this.container);
       
@@ -427,14 +705,12 @@
     init() {
       console.log('파티클 생성 시작...');
       
-      // 초기 파티클 생성
       for (let i = 0; i < 30; i++) {
         this.createParticle();
       }
       
       console.log(`${this.particles.length}개의 파티클이 생성되었습니다.`);
       
-      // 주기적으로 새 파티클 생성
       setInterval(() => {
         if (this.particles.length < 50) {
           this.createParticle();
@@ -449,25 +725,20 @@
       const isBinary = Math.random() > 0.5;
       particle.className = isBinary ? 'particle binary-particle' : 'particle';
       
-      // 파티클 내용 설정
       const symbols = isBinary ? this.binarySymbols : this.codeSymbols;
       particle.textContent = symbols[Math.floor(Math.random() * symbols.length)];
       
-      // 위치 설정 (화면 전체에 분산)
-      const leftPosition = Math.random() * 100; // 0% ~ 100%
+      const leftPosition = Math.random() * 100;
       particle.style.left = leftPosition + '%';
-      particle.style.bottom = '-50px'; // 화면 하단 아래에서 시작
+      particle.style.bottom = '-50px';
       
-      // 애니메이션 설정
       particle.style.animationDelay = Math.random() * 3 + 's';
       particle.style.animationDuration = (12 + Math.random() * 8) + 's';
       
-      // 크기와 투명도 설정
       const scale = isBinary ? (1.0 + Math.random() * 0.5) : (0.8 + Math.random() * 0.7);
       particle.style.fontSize = (isBinary ? 18 : 16) * scale + 'px';
       particle.style.opacity = 0.4 + Math.random() * 0.4;
       
-      // 색상 강화
       if (isBinary) {
         particle.style.color = `rgba(39, 147, 206, ${0.6 + Math.random() * 0.4})`;
         particle.style.textShadow = '0 0 10px rgba(39, 147, 206, 0.8)';
@@ -476,11 +747,9 @@
         particle.style.textShadow = '0 0 8px rgba(255, 255, 255, 0.5)';
       }
       
-      // 컨테이너에 추가
       this.container.appendChild(particle);
       this.particles.push(particle);
       
-      // 애니메이션 완료 후 제거
       setTimeout(() => {
         if (particle.parentNode) {
           particle.parentNode.removeChild(particle);
@@ -490,7 +759,7 @@
     }
   }
 
-  // ✅ 마우스 커서 효과 구현
+  // 마우스 커서 효과 구현
   class CursorEffect {
     constructor() {
       this.cursorGlow = document.getElementById('cursorGlow');
@@ -500,7 +769,6 @@
     }
 
     init() {
-      // 커서 트레일 요소들 생성
       for (let i = 0; i < this.maxTrails; i++) {
         const trail = document.createElement('div');
         trail.className = 'cursor-trail';
@@ -514,7 +782,6 @@
         });
       }
 
-      // 마우스 이벤트 리스너
       document.addEventListener('mousemove', (e) => {
         this.updateCursor(e.clientX, e.clientY);
       });
@@ -531,11 +798,9 @@
     }
 
     updateCursor(x, y) {
-      // 메인 커서 글로우 업데이트
       this.cursorGlow.style.left = (x - 10) + 'px';
       this.cursorGlow.style.top = (y - 10) + 'px';
 
-      // 트레일 업데이트 (지연 효과)
       this.trails.forEach((trail, index) => {
         setTimeout(() => {
           trail.x = x;
@@ -547,7 +812,7 @@
     }
   }
 
-  // ✅ 타이핑 효과 구현
+  // 타이핑 효과 구현
   class TypingEffect {
     constructor() {
       this.titleElement = document.getElementById('typingTitle');
@@ -559,14 +824,13 @@
       
       this.titleIndex = 0;
       this.subtitleIndex = 0;
-      this.titleSpeed = 100; // 타이핑 속도 (ms)
+      this.titleSpeed = 100;
       this.subtitleSpeed = 50;
       
       this.init();
     }
 
     init() {
-      // 페이지 로드 후 1초 뒤에 타이핑 시작
       setTimeout(() => {
         this.typeTitle();
       }, 1000);
@@ -578,7 +842,6 @@
         this.titleIndex++;
         setTimeout(() => this.typeTitle(), this.titleSpeed);
       } else {
-        // 제목 타이핑 완료 후 커서 제거하고 부제목 시작
         this.titleElement.innerHTML = this.titleText;
         setTimeout(() => this.typeSubtitle(), 500);
       }
@@ -590,7 +853,6 @@
         this.subtitleIndex++;
         setTimeout(() => this.typeSubtitle(), this.subtitleSpeed);
       } else {
-        // 부제목 타이핑 완료 후 커서 제거하고 버튼 표시
         this.subtitleElement.innerHTML = this.subtitleText;
         setTimeout(() => {
           this.buttonElement.style.opacity = '1';
@@ -599,11 +861,16 @@
     }
   }
 
-  // ✅ 시스템 초기화
+  // 시스템 초기화
   document.addEventListener('DOMContentLoaded', () => {
     new ParticleSystem();
     new CursorEffect();
     new TypingEffect();
+    
+    // 3D Scene 초기화 (약간의 지연 후)
+    setTimeout(() => {
+      new ThreeJSScene();
+    }, 1000);
   });
 </script>
 
