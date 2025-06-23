@@ -288,6 +288,8 @@
             margin-bottom: 2px;
             font-weight: 500;
         }
+
+
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -355,6 +357,9 @@
               <button class="move-down-session text-xs bg-gray-600 hover:bg-gray-700 text-white p-1 rounded" title="아래로 이동">
                 <span class="material-icons" style="font-size: 14px;">arrow_downward</span>
               </button>
+              <button class="export-md-session text-xs bg-green-600 hover:bg-green-700 text-white p-1 rounded" title="MD 파일로 추출">
+                <span class="material-icons" style="font-size: 14px;">download</span>
+              </button>
               <button class="delete-session text-xs bg-red-600 hover:bg-red-700 text-white p-1 rounded" title="삭제">
                 <span class="material-icons" style="font-size: 14px;">delete</span>
               </button>
@@ -418,15 +423,21 @@
 
   <!-- 오른쪽 메인 채팅 영역 -->
   <div class="flex-1 flex flex-col">
-    <!-- 선택된 파일 컨텍스트 표시 영역 -->
-    <div id="selected-files-context" class="bg-gray-700 border-b border-gray-600 p-3" style="display: none;">
-      <div class="flex justify-between items-center mb-2">
-        <div class="text-sm font-semibold text-white">선택된 파일 (질문 컨텍스트)</div>
-        <button id="clear-selected-files" class="text-gray-400 hover:text-white text-sm">
-          <span class="material-icons text-sm">clear_all</span> 모두 제거
-        </button>
+    <!-- MD 파일 업로드 영역 (항상 표시) -->
+    <div class="bg-gray-700 border-b border-gray-600 p-3">
+      <div class="flex justify-between items-center">
+        <div class="text-sm font-semibold text-white">질문 컨텍스트</div>
+        <div class="flex gap-2">
+          <label for="md-file-upload" class="bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded text-xs cursor-pointer flex items-center">
+            <span class="material-icons text-xs mr-1">upload_file</span>MD 추가
+          </label>
+          <input type="file" id="md-file-upload" accept=".md,.txt" style="display: none;">
+          <button id="clear-selected-files" class="text-gray-400 hover:text-white text-sm" style="display: none;">
+            <span class="material-icons text-sm">clear_all</span> 모두 제거
+          </button>
+        </div>
       </div>
-      <div id="selected-files-list" class="flex flex-wrap gap-2"></div>
+      <div id="selected-files-list" class="flex flex-wrap gap-2 mt-2" style="display: none;"></div>
     </div>
 
   <!-- 채팅 메시지 표시 영역 -->
@@ -1219,6 +1230,43 @@ window.addEventListener('load', async function() {
             }
         }
         
+        // MD 추출 버튼 처리
+        if (e.target.closest('.export-md-session')) {
+            e.stopPropagation();
+            const sessionItem = e.target.closest('.chat-session-item');
+            const sessionId = sessionItem.dataset.sessionId;
+            
+            try {
+                const response = await fetch('/export-chat-md', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ session_id: sessionId })
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = `chat-session-${sessionId}.md`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    // 성공 메시지 표시
+                    showToast('채팅 내역이 MD 파일로 다운로드되었습니다.');
+                } else {
+                    const result = await response.json();
+                    alert('MD 추출 실패: ' + (result.error || '알 수 없는 오류'));
+                }
+            } catch (error) {
+                console.error('MD 추출 오류:', error);
+                alert('MD 추출 중 오류가 발생했습니다.');
+            }
+        }
+        
         // 삭제 버튼 처리
         if (e.target.closest('.delete-session')) {
             e.stopPropagation();
@@ -1680,11 +1728,71 @@ function addFileToContextFromModal(fileInfo) {
 // 선택된 파일 컨텍스트 관리 함수들
 function initSelectedFilesContext() {
     const clearButton = document.getElementById('clear-selected-files');
+    const mdFileUpload = document.getElementById('md-file-upload');
     
     clearButton.addEventListener('click', function() {
         selectedFiles = [];
         updateSelectedFilesDisplay();
     });
+    
+    // MD 파일 업로드 처리
+    mdFileUpload.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            handleMdFileUpload(file);
+            // 파일 입력 초기화
+            e.target.value = '';
+        }
+    });
+}
+
+// MD 파일 업로드 처리 함수
+function handleMdFileUpload(file) {
+    // 파일 크기 체크 (5MB 제한)
+    if (file.size > 5 * 1024 * 1024) {
+        alert('파일 크기는 5MB 이하여야 합니다.');
+        return;
+    }
+    
+    // 파일 확장자 체크
+    const allowedExtensions = ['.md', '.txt'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    if (!allowedExtensions.includes(fileExtension)) {
+        alert('MD 또는 TXT 파일만 업로드 가능합니다.');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const content = e.target.result;
+        
+        // 이미 같은 이름의 파일이 있는지 확인
+        const existingFile = selectedFiles.find(f => f.path === file.name);
+        if (existingFile) {
+            if (!confirm('같은 이름의 파일이 이미 있습니다. 교체하시겠습니까?')) {
+                return;
+            }
+            // 기존 파일 제거
+            selectedFiles = selectedFiles.filter(f => f.path !== file.name);
+        }
+        
+        // 파일을 컨텍스트에 추가
+        selectedFiles.push({
+            path: file.name,
+            content: content,
+            branch: 'uploaded',
+            type: 'uploaded'
+        });
+        
+        updateSelectedFilesDisplay();
+        showToast(`파일 "${file.name}"이(가) 컨텍스트에 추가되었습니다.`);
+    };
+    
+    reader.onerror = function() {
+        alert('파일을 읽는 중 오류가 발생했습니다.');
+    };
+    
+    reader.readAsText(file, 'UTF-8');
 }
 
 function addFileToContext(sessionId, branchName, filePath) {
@@ -1720,24 +1828,32 @@ function addFileToContext(sessionId, branchName, filePath) {
 }
 
 function updateSelectedFilesDisplay() {
-    const contextDiv = document.getElementById('selected-files-context');
     const filesList = document.getElementById('selected-files-list');
+    const clearButton = document.getElementById('clear-selected-files');
     
     if (selectedFiles.length === 0) {
-        contextDiv.style.display = 'none';
+        filesList.style.display = 'none';
+        clearButton.style.display = 'none';
         return;
     }
     
-    contextDiv.style.display = 'block';
+    filesList.style.display = 'flex';
+    clearButton.style.display = 'block';
     filesList.innerHTML = '';
     
     selectedFiles.forEach((file, index) => {
         const fileTag = document.createElement('div');
-        fileTag.className = 'bg-blue-600 text-white px-3 py-1 rounded-full text-xs flex items-center';
+        const isUploaded = file.type === 'uploaded';
+        const bgColor = isUploaded ? 'bg-purple-600' : 'bg-blue-600';
+        const hoverColor = isUploaded ? 'hover:bg-purple-700' : 'hover:bg-blue-700';
+        const icon = isUploaded ? 'upload_file' : 'description';
+        
+        fileTag.className = `${bgColor} text-white px-3 py-1 rounded-full text-xs flex items-center`;
         fileTag.innerHTML = `
-            <span class="material-icons text-xs mr-1">description</span>
+            <span class="material-icons text-xs mr-1">${icon}</span>
             <span>${file.path}</span>
-            <button class="ml-2 hover:bg-blue-700 rounded-full p-1" onclick="removeFileFromContext(${index})">
+            ${isUploaded ? '<span class="text-xs ml-1 opacity-75">(업로드됨)</span>' : ''}
+            <button class="ml-2 ${hoverColor} rounded-full p-1" onclick="removeFileFromContext(${index})">
                 <span class="material-icons text-xs">close</span>
             </button>
         `;
