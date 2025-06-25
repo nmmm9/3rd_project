@@ -33,7 +33,7 @@ import asyncio
 import sys
 
 # ----------------- 상수 정의 -----------------
-MAIN_EXTENSIONS = ['.py', '.js', '.md']  # 분석할 주요 파일 확장자
+MAIN_EXTENSIONS = ['.py', '.js', '.md', '.ts', '.java', '.cpp', '.h', '.hpp', '.c', '.cs', '.txt']  # 분석할 주요 파일 확장자
 CHUNK_SIZE = 500  # 텍스트 청크 크기
 GITHUB_TOKEN = "GITHUB_TOKEN"  # 환경 변수 키 이름
 KEY_FILE = ".key"  # 암호화 키 파일

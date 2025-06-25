@@ -20,6 +20,11 @@ load_dotenv()
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET")
 
+# Google OAuth 설정
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
+
 # GITHUB_CLIENT_ID와 GITHUB_CLIENT_SECRET이 .env 파일에 있는지 확인
 if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
     print("오류: GitHub OAuth Client ID 또는 Secret이 설정되어 있지 않습니다. .env 파일에 GITHUB_CLIENT_ID와 GITHUB_CLIENT_SECRET을 등록하세요.")
@@ -1214,6 +1219,106 @@ def get_file_content_api(session_id, branch_name, file_path):
     except Exception as e:
         print(f"[ERROR] 파일 내용 조회 실패: {str(e)}")
         return jsonify({'error': f'파일 내용 조회 중 오류가 발생했습니다: {str(e)}'}), 500
+
+def get_google_provider_cfg():
+    return requests.get(GOOGLE_DISCOVERY_URL).json()
+
+@app.route('/login/google')
+def google_login():
+    if not GOOGLE_CLIENT_ID:
+        flash('Google Client ID가 설정되지 않았습니다.', 'error')
+        return redirect(url_for('login'))
+    google_provider_cfg = get_google_provider_cfg()
+    authorization_endpoint = google_provider_cfg["authorization_endpoint"]
+    # state, nonce 등은 생략(간단 구현)
+    request_uri = (
+        f"{authorization_endpoint}?response_type=code"
+        f"&client_id={GOOGLE_CLIENT_ID}"
+        f"&redirect_uri={url_for('google_callback', _external=True)}"
+        f"&scope=openid%20email%20profile"
+        f"&access_type=offline"
+        f"&prompt=consent"
+    )
+    return redirect(request_uri)
+
+@app.route('/google/callback')
+def google_callback():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        flash('Google Client ID 또는 Secret이 설정되지 않았습니다.', 'error')
+        return redirect(url_for('login'))
+    code = request.args.get('code')
+    if not code:
+        flash('인증 코드를 받지 못했습니다.', 'error')
+        return redirect(url_for('login'))
+    google_provider_cfg = get_google_provider_cfg()
+    token_endpoint = google_provider_cfg["token_endpoint"]
+    token_url = token_endpoint
+    token_data = {
+        'code': code,
+        'client_id': GOOGLE_CLIENT_ID,
+        'client_secret': GOOGLE_CLIENT_SECRET,
+        'redirect_uri': url_for('google_callback', _external=True),
+        'grant_type': 'authorization_code'
+    }
+    token_headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    token_response = requests.post(token_url, data=token_data, headers=token_headers)
+    if not token_response.ok:
+        flash('구글 토큰 요청 실패', 'error')
+        return redirect(url_for('login'))
+    token_json = token_response.json()
+    access_token = token_json.get('access_token')
+    id_token = token_json.get('id_token')
+    if not access_token:
+        flash('구글 액세스 토큰을 받지 못했습니다.', 'error')
+        return redirect(url_for('login'))
+    userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
+    userinfo_response = requests.get(userinfo_endpoint, headers={"Authorization": f"Bearer {access_token}"})
+    if not userinfo_response.ok:
+        flash('구글 사용자 정보 요청 실패', 'error')
+        return redirect(url_for('login'))
+    userinfo = userinfo_response.json()
+    google_id = userinfo.get('sub')
+    google_email = userinfo.get('email')
+    google_name = userinfo.get('name')
+    google_picture = userinfo.get('picture')
+    # DB에서 구글 사용자 확인/생성 (is_google_user=True)
+    user = db.get_user_by_google_id(google_id) if hasattr(db, 'get_user_by_google_id') else None
+    if user:
+        session['user_id'] = user.get('id')
+        session['username'] = user.get('username')
+        session['is_google_user'] = True
+        session['google_token'] = access_token
+        db.update_last_login(user.get('id'))
+    else:
+        # username/email 중복 방지: email 또는 google_id 기반
+        username = google_email.split('@')[0] if google_email else f'google_{google_id}'
+        success, result = db.create_user(
+            username=username,
+            email=google_email,
+            is_google_user=True,
+            google_id=google_id,
+            google_username=username,
+            google_token=access_token,
+            google_avatar_url=google_picture
+        ) if hasattr(db, 'create_user') else (False, 'DB 함수 없음')
+        if success:
+            user_id = result
+            session['user_id'] = user_id
+            session['username'] = username
+            session['is_google_user'] = True
+            session['google_token'] = access_token
+        else:
+            flash(f'Google 회원가입 실패: {result}', 'error')
+            return redirect(url_for('login'))
+    session['google_token'] = access_token
+    session['user_info'] = {
+        'login': google_name or username,
+        'id': google_id,
+        'avatar_url': google_picture,
+        'name': google_name
+    }
+    print(f"[DEBUG] Google 로그인 성공: {google_email}")
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(debug=False) 
