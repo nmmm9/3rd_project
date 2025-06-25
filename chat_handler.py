@@ -7,6 +7,8 @@ from git_modifier import create_branch_and_commit
 import re
 import tiktoken
 from chat_memory import save_conversation, get_relevant_conversations
+import json
+from typing import List, Dict, Any
 
 
 # OpenAI 임베딩 함수 정의
@@ -24,6 +26,41 @@ def openai_ef(text):
 # OpenAI 토큰 계산용 tokenizer 초기화
 enc = tiktoken.get_encoding("cl100k_base")# top-k 유사 청크 개수
 TOP_K = 5
+
+def _extract_role_tag_keywords(message: str) -> List[str]:
+    """
+    사용자 메시지 또는 파싱된 역할 태그 딕셔너리에서 역할 태그와 관련된 키워드를 추출합니다.
+    """
+    keywords = []
+    role_keywords = {
+        "인증": ["인증", "로그인", "회원가입", "보안"],
+        "데이터베이스": ["DB", "데이터베이스", "저장", "모델", "스키마", "연결"],
+        "API": ["API", "엔드포인트", "요청", "응답", "REST", "라우팅"],
+        "UI": ["UI", "프론트엔드", "화면", "렌더링", "템플릿"],
+        "유틸리티": ["유틸리티", "헬퍼", "도우미", "공통 함수"],
+        "설정": ["설정", "환경변수", "config"],
+        "파일": ["파일", "경로", "읽기", "쓰기"],
+        "클론": ["클론", "저장소", "git", "github"],
+        "분석": ["분석", "파싱", "코드 이해"],
+        "채팅": ["채팅", "대화", "메모리"],
+        "임베딩": ["임베딩", "벡터", "ChromaDB"],
+        "수정": ["수정", "변경", "리팩토링"],
+        "푸시": ["푸시", "커밋", "깃헙"],
+        "에러": ["에러", "오류", "예외 처리"],
+        "비동기": ["비동기", "async", "await"],
+        "세션": ["세션", "사용자"],
+        "백업": ["백업"],
+        "머지": ["머지", "충돌"],
+        "크로마": ["크로마", "chroma"]
+    }
+
+    # 사용자 메시지에서 키워드 추출
+    for tag, related_terms in role_keywords.items():
+        for term in related_terms:
+            if term in message:
+                keywords.append(tag)
+                break
+    return keywords
 
 # 더 구체적이고 엄격한 시스템 프롬프트
 SYSTEM_PROMPT_QA = (
@@ -237,10 +274,35 @@ def handle_chat(session_id, message):
         # 유사 코드 청크 검색
         print(f"[DEBUG] 유사 코드 청크 검색 시작 (TOP_K={TOP_K})")
         try:
-            results = collection.query(
-                query_embeddings=[embedding],
-                n_results=TOP_K
-            )
+            # 역할 태그 키워드 추출
+            extracted_keywords = _extract_role_tag_keywords(message)
+            print(f"[DEBUG] 추출된 역할 태그 키워드: {extracted_keywords}")
+
+            # `where` 절 동적으로 생성
+            where_clause = {}
+            if extracted_keywords:
+                where_conditions = []
+                for kw in extracted_keywords:
+                    where_conditions.append({"role_tag": {"$contains": kw}})
+
+                if len(where_conditions) > 1:
+                    where_clause = {"$or": where_conditions}
+                elif where_conditions:
+                    where_clause = where_conditions[0]
+
+            print(f"[DEBUG] ChromaDB 쿼리 where 절: {where_clause}")
+            
+            if where_clause:
+                results = collection.query(
+                    query_embeddings=[embedding],
+                    n_results=TOP_K,
+                    where=where_clause
+                )
+            else:
+                results = collection.query(
+                    query_embeddings=[embedding],
+                    n_results=TOP_K
+                )
             print(f"[DEBUG] 검색 결과 구조: {list(results.keys())}")
         except Exception as e:
             import traceback
@@ -277,13 +339,11 @@ def handle_chat(session_id, message):
             # LLM 호출
             print("[DEBUG] LLM 호출 시작")
             response = openai.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT_QA},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=2000
+                model="gpt-4o",
+                messages=[{"role": "system", "content": SYSTEM_PROMPT_QA},
+                          {"role": "user", "content": prompt}],
+                temperature=0.0,
+                stream=False
             )
             
             # 응답 처리
@@ -483,10 +543,35 @@ def handle_modify_request(session_id, message):
         # 유사 코드 청크 검색
         print(f"[DEBUG] 유사 코드 청크 검색 시작 (TOP_K={TOP_K})")
         try:
-            results = collection.query(
-                query_embeddings=[embedding],
-                n_results=TOP_K
-            )
+            # 역할 태그 키워드 추출
+            extracted_keywords = _extract_role_tag_keywords(message)
+            print(f"[DEBUG] 추출된 역할 태그 키워드: {extracted_keywords}")
+
+            # `where` 절 동적으로 생성
+            where_clause = {}
+            if extracted_keywords:
+                where_conditions = []
+                for kw in extracted_keywords:
+                    where_conditions.append({"role_tag": {"$contains": kw}})
+
+                if len(where_conditions) > 1:
+                    where_clause = {"$or": where_conditions}
+                elif where_conditions:
+                    where_clause = where_conditions[0]
+
+            print(f"[DEBUG] ChromaDB 쿼리 where 절: {where_clause}")
+            
+            if where_clause:
+                results = collection.query(
+                    query_embeddings=[embedding],
+                    n_results=TOP_K,
+                    where=where_clause
+                )
+            else:
+                results = collection.query(
+                    query_embeddings=[embedding],
+                    n_results=TOP_K
+                )
             print(f"[DEBUG] 검색 결과 구조: {list(results.keys())}")
         except Exception as e:
             import traceback

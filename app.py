@@ -1,16 +1,18 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, Response
 import uuid
 import time
-from github_analyzer import analyze_repository
+from github_analyzer import analyze_repository, GitHubRepositoryFetcher
 from chat_handler import handle_chat, handle_modify_request, apply_changes
 from dotenv import load_dotenv
 import os
 import sys
-import db
+# import db # db 모듈 사용 안함
 import traceback
 import json
 import openai
 from chat_handler import detect_github_push_intent
+import requests
+# import bcrypt  # 비밀번호 해싱을 위한 모듈 추가 (db 사용 안하므로)
 
 load_dotenv()
 
@@ -24,7 +26,12 @@ if not key:
     print("오류: OpenAI API 키가 설정되어 있지 않습니다. .env 파일에 OPENAI_API_KEY를 등록하세요.")
     sys.exit(1)
 
-db.init_db()
+# 데이터베이스 초기화 (테스트를 위해 MySQL/SQLite 연결을 우회합니다)
+# db_initialized = db.init_db()
+# if not db_initialized:
+#     print("오류: 데이터베이스 초기화에 실패했습니다.")
+#     sys.exit(1)
+print("[INFO] 데이터베이스 초기화 우회: 실제 DB 연결 없이 진행합니다.")
 
 # 세션 데이터를 파일에 저장하고 로드하는 함수
 def save_sessions(sessions_data):
@@ -375,6 +382,212 @@ def apply_local():
         print(f"[ERROR] 로컬 적용 중 오류: {str(e)}")
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        # 비밀번호는 더 이상 필요 없지만 폼에서 받을 수 있도록 유지
+        password = request.form.get('password') 
+        
+        # 임시 로그인 로직: 어떤 사용자 이름이든 입력하면 로그인 성공으로 간주
+        if not username:
+            flash('사용자 이름을 입력해주세요.', 'error')
+            return render_template('login.html')
+        
+        # 가짜 사용자 ID 및 이름 설정
+        session['user_id'] = "test_user_id" # 고정된 테스트 사용자 ID
+        session['username'] = username # 입력된 사용자 이름 사용
+        
+        flash(f'환영합니다, {username}님! (테스트 로그인)', 'success')
+        return redirect(url_for('index'))
+    
+    # GET 요청 처리
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+# GitHub 로그인 시작 (이 부분은 OAuth가 필요하므로 실제 토큰이 필요합니다. 테스트시에는 일반 로그인으로 진행)
+@app.route('/login/github')
+def github_login():
+    flash('GitHub 로그인은 현재 데이터베이스 없이 테스트할 수 없습니다. 일반 로그인을 이용해주세요.', 'warning')
+    return redirect(url_for('login'))
+
+# GitHub 로그인 콜백 처리 (테스트 시 우회)
+@app.route('/github/callback')
+def github_callback():
+    flash('GitHub 콜백은 현재 데이터베이스 없이 테스트할 수 없습니다. 일반 로그인을 이용해주세요.', 'warning')
+    return redirect(url_for('login'))
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    # if request.method == 'POST':
+    #     username = request.form['username']
+    #     password = request.form['password']
+    #     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    #     if db.add_user(username, hashed_password.decode('utf-8')):
+    #         flash('회원가입 성공! 로그인해주세요.')
+    #         return redirect(url_for('login'))
+    #     else:
+    #         flash('회원가입 실패: 사용자 이름이 이미 존재합니다.')
+    # return render_template('signup.html')
+    # DB 사용 안함: 항상 성공으로 가정
+    return render_template('signup.html')
+
+@app.route('/new-chat', methods=['POST'])
+def new_chat():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return redirect(url_for('home'))
+    
+    repo_url = request.form.get('repo_url')
+    token = request.form.get('github_token') # GitHub 토큰은 실제 GitHub 연동 시 필요
+
+    if not repo_url:
+        flash('레포지토리 URL을 입력해주세요.', 'error')
+        return redirect(url_for('index'))
+
+    # 새 세션 ID 생성 (db.py 사용 안함)
+    session_id = str(uuid.uuid4())
+    
+    # sessions 딕셔너리에 새 세션 정보 저장 (파일 기반 저장)
+    sessions[session_id] = {
+        'repo_url': repo_url,
+        'token': token,
+        'files': [], # 초기에는 파일 없음
+        'directory_structure': '' # 초기에는 디렉토리 구조 없음
+    }
+    save_sessions(sessions) # 세션 딕셔너리 파일에 저장
+    
+    flash('새 채팅 세션이 생성되었습니다.', 'success')
+    return redirect(url_for('chat', session_id=session_id))
+
+@app.route('/chat-sessions', methods=['GET'])
+def get_chat_sessions():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인 필요'}), 401
+    
+    # sessions 딕셔너리에서 세션 목록 반환 (db.py 사용 안함)
+    session_list = []
+    for sid, data in sessions.items():
+        session_list.append({
+            'session_id': sid,
+            'name': data.get('name', f'세션 {sid[:8]}'),
+            'repo_url': data.get('repo_url', '알 수 없음'),
+            'display_order': data.get('display_order', 0) # 더미 값
+        })
+    
+    # display_order에 따라 정렬 (필요시)
+    session_list.sort(key=lambda x: x.get('display_order', 0))
+
+    return jsonify(session_list)
+
+@app.route('/get_chat_history', methods=['GET'])
+def get_chat_history():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인 필요'}), 401
+
+    session_id = request.args.get('session_id')
+    if not session_id:
+        return jsonify({'error': '세션 ID가 필요합니다.'}), 400
+    
+    # chat_memory에서 실제 대화 기록 가져오기
+    # ConversationBufferMemory는 특정 query에 대한 관련 대화를 반환하지 않고, 전체를 반환함
+    # 따라서 query 매개변수는 무시하고 전체 대화를 가져옵니다.
+    memory_context = chat_memory.get_relevant_conversations(session_id, "dummy_query", top_k=100) # top_k는 전체 히스토리를 가져오므로 큰 값 사용
+    
+    # memory_context는 이미 문자열이므로 파싱이 필요
+    history_lines = memory_context.split('\n')
+    parsed_history = []
+    for line in history_lines:
+        if line.startswith("Human: "):
+            parsed_history.append({'role': 'user', 'content': line[len("Human: "):]})
+        elif line.startswith("AI: "):
+            parsed_history.append({'role': 'assistant', 'content': line[len("AI: "):]})
+
+    return jsonify(parsed_history)
+
+@app.route('/rename-chat-session', methods=['POST'])
+def rename_chat_session():
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인 필요'}), 401
+    
+    data = request.get_json()
+    session_id = data.get('session_id')
+    new_name = data.get('new_name')
+
+    if not session_id or not new_name:
+        return jsonify({'error': '세션 ID와 새 이름을 모두 입력하세요.'}), 400
+    
+    if session_id in sessions:
+        sessions[session_id]['name'] = new_name
+        save_sessions(sessions)
+        return jsonify({'success': True, 'message': '세션 이름이 업데이트되었습니다.'})
+    return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+
+@app.route('/reorder-chat-session', methods=['POST'])
+def reorder_chat_session():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인 필요'}), 401
+
+    data = request.get_json()
+    session_id = data.get('session_id')
+    reference_session_id = data.get('reference_session_id')
+    target_position = data.get('target_position')
+
+    if not session_id or not reference_session_id or not target_position:
+        return jsonify({'error': '모든 필드를 입력하세요.'}), 400
+
+    # 임시 순서 변경 로직 (db.py 사용 안함)
+    # 이 부분은 실제 데이터베이스 없이 완벽하게 순서를 관리하기 어려울 수 있습니다.
+    # 여기서는 간단히 메모리 내 sessions 딕셔너리만 조작합니다.
+    session_ids_ordered = list(sessions.keys())
+    try:
+        current_index = session_ids_ordered.index(session_id)
+        reference_index = session_ids_ordered.index(reference_session_id)
+
+        # 현재 세션 제거
+        moved_session_id = session_ids_ordered.pop(current_index)
+
+        if target_position == 'before':
+            session_ids_ordered.insert(reference_index, moved_session_id)
+        elif target_position == 'after':
+            session_ids_ordered.insert(reference_index + 1, moved_session_id)
+        
+        # 새로운 순서를 display_order에 반영
+        for i, sid in enumerate(session_ids_ordered):
+            if sid in sessions:
+                sessions[sid]['display_order'] = i
+        save_sessions(sessions)
+        
+        return jsonify({'success': True, 'message': '세션 순서가 업데이트되었습니다.'})
+    except ValueError:
+        return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+    except Exception as e:
+        return jsonify({'error': f'순서 변경 중 오류 발생: {str(e)}'}), 500
+
+@app.route('/delete-chat-session', methods=['POST'])
+def delete_chat_session():
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'error': '로그인 필요'}), 401
+
+    data = request.get_json()
+    session_id = data.get('session_id')
+
+    if not session_id:
+        return jsonify({'error': '세션 ID를 입력하세요.'}), 400
+
+    if session_id in sessions:
+        del sessions[session_id]
+        save_sessions(sessions)
+        # ConversationBufferMemory 초기화
+        chat_memory.reset_memory(session_id)
+        return jsonify({'success': True, 'message': '세션이 삭제되었습니다.'})
+    return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
 
 if __name__ == '__main__':
     app.run(debug=False) 

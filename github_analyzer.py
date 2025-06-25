@@ -36,7 +36,8 @@ GITHUB_TOKEN = "GITHUB_TOKEN"  # 환경 변수 키 이름
 KEY_FILE = ".key"  # 암호화 키 파일
 
 # ChromaDB 기본 클라이언트 (로컬)
-chroma_client = chromadb.Client()
+# chroma_client = chromadb.Client() # 인메모리 클라이언트
+chroma_client = chromadb.PersistentClient(path="./chroma_db") # 영구 저장 클라이언트
 
 def analyze_repository(repo_url: str, token: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -625,13 +626,13 @@ class RepositoryEmbedder:
                     print(f"[WARNING] 임베딩 실패: {e}")
                     embedding = [0.0] * 1536
                 # 역할 태깅
-                tag_prompt = f"아래 코드는 어떤 역할(기능/목적)을 하나요? 한글로 간단히 요약해줘.\n\n코드:\n{chunk}"
+                tag_prompt = f"""아래 코드는 어떤 역할(기능/목적), 주요 구성 요소, 사용된 기술을 포함하나요? JSON 형식으로 {{"roles": [], "components": [], "technologies": []}} 와 같이 반환해줘. (예: {{"roles": ["사용자 인증", "로그인 처리"], "components": ["Flask"], "technologies": ["JWT"]}})\n\n코드:\n{chunk}"""
                 try:
                     tag_resp = await client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[{"role": "user", "content": tag_prompt}],
                         temperature=0.0,
-                        max_tokens=32
+                        max_tokens=100
                     )
                     role_tag = tag_resp.choices[0].message.content.strip()
                     print(f"[INFO] 역할 태깅 결과: 파일={file.get('path')}, 청크={i}, 역할={role_tag}")
