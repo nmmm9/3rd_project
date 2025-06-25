@@ -169,8 +169,9 @@ def init_db():
         conn.close()
 
 # 사용자 관리 함수들
-def create_user(username, email, password=None, is_github_user=False, github_id=None, 
-                github_username=None, github_token=None, github_avatar_url=None):
+def create_user(username, email, password=None, is_github_user=False, is_google_user=False,
+                github_id=None, github_username=None, github_token=None, github_avatar_url=None,
+                google_id=None, google_username=None, google_token=None, google_avatar_url=None):
     """새 사용자를 생성하는 함수"""
     conn = get_db_connection()
     if not conn:
@@ -180,11 +181,12 @@ def create_user(username, email, password=None, is_github_user=False, github_id=
         with conn.cursor() as cursor:
             sql = '''
             INSERT INTO users 
-            (username, email, password_hash, is_github_user, github_id, github_username, github_token, github_avatar_url) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (username, email, password_hash, is_github_user, github_id, github_username, github_token, github_avatar_url,
+             is_google_user, google_id, google_username, google_token, google_avatar_url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             '''
-            cursor.execute(sql, (username, email, password, is_github_user, github_id, 
-                                github_username, github_token, github_avatar_url))
+            cursor.execute(sql, (username, email, password, is_github_user, github_id, github_username, github_token, github_avatar_url,
+                                 is_google_user, google_id, google_username, google_token, google_avatar_url))
         conn.commit()
         return True, cursor.lastrowid
     except pymysql.err.IntegrityError as e:
@@ -195,6 +197,8 @@ def create_user(username, email, password=None, is_github_user=False, github_id=
                 return False, "이미 사용 중인 이메일입니다."
             elif "github_id" in str(e):
                 return False, "이미 연결된 GitHub 계정입니다."
+            elif "google_id" in str(e):
+                return False, "이미 연결된 Google 계정입니다."
         return False, str(e)
     except Exception as e:
         return False, str(e)
@@ -245,6 +249,21 @@ def get_user_by_github_id(github_id):
         with conn.cursor() as cursor:
             sql = "SELECT * FROM users WHERE github_id = %s"
             cursor.execute(sql, (github_id,))
+            return cursor.fetchone()
+    except Exception as e:
+        print(f"[ERROR] 사용자 조회 오류: {e}")
+        return None
+    finally:
+        conn.close()
+
+def get_user_by_google_id(google_id):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cursor:
+            sql = "SELECT * FROM users WHERE google_id = %s"
+            cursor.execute(sql, (google_id,))
             return cursor.fetchone()
     except Exception as e:
         print(f"[ERROR] 사용자 조회 오류: {e}")

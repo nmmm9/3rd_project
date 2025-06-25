@@ -31,9 +31,10 @@ import markdown
 import concurrent.futures
 import asyncio
 import sys
+import nbformat
 
 # ----------------- 상수 정의 -----------------
-MAIN_EXTENSIONS = ['.py', '.js', '.md']  # 분석할 주요 파일 확장자
+MAIN_EXTENSIONS = ['.py', '.js', '.md', '.ts', '.java', '.cpp', '.h', '.hpp', '.c', '.cs', '.txt','.ipynb']  # 분석할 주요 파일 확장자
 CHUNK_SIZE = 500  # 텍스트 청크 크기
 GITHUB_TOKEN = "GITHUB_TOKEN"  # 환경 변수 키 이름
 KEY_FILE = ".key"  # 암호화 키 파일
@@ -1197,6 +1198,29 @@ class RepositoryEmbedder:
                         chunks.append((chunk, t_start, t_end, None, None, 1, len(source_code.splitlines()), None, 0, None))
                 
                 return chunks
+            def chunk_ipynb(ipynb_text):
+                try:
+                    nb = nbformat.reads(ipynb_text, as_version=4)
+                except Exception as e:
+                    print(f"[WARNING] ipynb 파싱 실패: {e}")
+                    return [(ipynb_text, 0, len(enc.encode(ipynb_text)), None, "ipynb", 1, len(ipynb_text.splitlines()))]
+                chunks = []
+                for idx, cell in enumerate(nb.cells):
+                    cell_type = cell.get('cell_type', '')
+                    source = cell.get('source', '')
+                    if not source.strip():
+                        continue
+                    # 셀 타입별로 태그
+                    tag = f"{cell_type} 셀"
+                    # 토큰 단위로 분할
+                    if len(enc.encode(source)) > 256:
+                        for chunk, t_start, t_end in split_by_tokens(source, max_tokens=256, overlap=64):
+                            chunks.append((chunk, t_start, t_end, None, tag, idx+1, idx+1))
+                    else:
+                        chunks.append((source, 0, len(enc.encode(source)), None, tag, idx+1, idx+1))
+                if not chunks:
+                    chunks.append((ipynb_text, 0, len(enc.encode(ipynb_text)), None, "ipynb", 1, len(ipynb_text.splitlines())))
+                return chunks
             # 1. 전체 청크 수집
             all_chunks = []
             for file in files:
@@ -1213,6 +1237,8 @@ class RepositoryEmbedder:
                     chunks = chunk_markdown(content)
                 elif ext == '.js':
                     chunks = chunk_js(content)
+                elif ext == '.ipynb':
+                    chunks = chunk_ipynb(content)
                 else:
                     # 오류 수정: 일반 파일은 split_by_tokens로 처리하고 7개 필드 구조에 맞게 조정
                     simple_chunks = split_by_tokens(content, max_tokens=256, overlap=64)
