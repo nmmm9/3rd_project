@@ -118,15 +118,31 @@ def github_login():
         flash('GitHub Client ID가 설정되지 않았습니다.', 'error')
         return redirect(url_for('login'))
     
-    # 디버깅: 현재 설정 확인
-    print(f"[DEBUG] GitHub OAuth 시작")
-    print(f"[DEBUG] SERVER_NAME: {app.config.get('SERVER_NAME')}")
-    print(f"[DEBUG] PREFERRED_URL_SCHEME: {app.config.get('PREFERRED_URL_SCHEME')}")
+    # 콜백 URL을 환경 변수 기반으로 직접 생성
+    server_name = os.environ.get('SERVER_NAME')
+    scheme = os.environ.get('PREFERRED_URL_SCHEME', 'http')
+    port = os.environ.get('PORT', '5000')
     
-    # 사용자를 GitHub 인증 페이지로 리디렉션
+    if server_name:
+        # 환경 변수가 있으면 직접 생성
+        if port == '80' and scheme == 'http' or port == '443' and scheme == 'https':
+            callback_url = f"{scheme}://{server_name}/github/callback"
+        else:
+            callback_url = f"{scheme}://{server_name}:{port}/github/callback"
+    else:
+        # 환경 변수가 없으면 Flask의 url_for 사용
+        callback_url = url_for('github_callback', _external=True)
+    
+    print(f"[DEBUG] GitHub OAuth 콜백 URL: {callback_url}")
+    print(f"[DEBUG] SERVER_NAME: {server_name}")
+    print(f"[DEBUG] PREFERRED_URL_SCHEME: {scheme}")
+    print(f"[DEBUG] PORT: {port}")
+    
+    # 사용자를 GitHub 인증 페이지로 리디렉션 (redirect_uri 추가)
     github_auth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
+        f"&redirect_uri={callback_url}"
         f"&scope=repo,user"  # 필요한 권한 범위 (예: public_repo, repo, user 등)
     )
     print(f"[DEBUG] GitHub OAuth 요청 URL: {github_auth_url}")
