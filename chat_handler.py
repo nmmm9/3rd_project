@@ -7,12 +7,14 @@ from git_modifier import create_branch_and_commit
 import re
 import tiktoken
 import db
+import chat_memory  # 추가: chat_memory 모듈 import
 
 # OpenAI 토큰 계산용 tokenizer 초기화
 enc = tiktoken.get_encoding("cl100k_base")
 
 # top-k 유사 청크 개수
 TOP_K = 20
+
 
 # 새로운 역할과 메타데이터를 활용한 시스템 프롬프트
 SYSTEM_PROMPT_QA = """당신은 코드 분석과 이해에 특화된 전문적인 소프트웨어 엔지니어 AI입니다.
@@ -182,11 +184,17 @@ def handle_chat(session_id, message):
         print(f"[ERROR] 세션 {session_id}를 찾을 수 없습니다.")
         return {'answer': '세션을 찾을 수 없습니다. 새로운 분석을 시작해주세요.', 'error': 'session_not_found'}
     
-    # DB에서 세션 데이터 조회
-    session_data = db.get_session_data_from_db(session_id)
     repo_path = f"./repos/{session_id}"
     
-    print(f"[DEBUG] 세션 데이터 키: {list(session_data.keys())}")
+    print(f"[DEBUG] 세션 데이터 키: {list(session_data.keys()) if session_data else 'None'}")
+    
+    # 이전 대화 기록 가져오기 (chat_memory 사용)
+    try:
+        previous_conversations = chat_memory.get_relevant_conversations(session_id, message, top_k=3)
+        print(f"[DEBUG] 이전 대화 기록 조회 완료: {len(previous_conversations) if previous_conversations != '이전 대화 없음' else 0} 건")
+    except Exception as e:
+        print(f"[WARNING] 이전 대화 기록 조회 실패: {e}")
+        previous_conversations = "이전 대화 없음"
     
     context_chunks = []
     full_file_contexts = []
@@ -274,11 +282,34 @@ def handle_chat(session_id, message):
         
         # 컬렉션 존재 여부 확인
         if collection_name not in collection_names:
-            print(f"[ERROR] 컬렉션을 찾을 수 없음: {collection_name}")
-            return {
-                'answer': f"저장소 분석 데이터를 찾을 수 없습니다. 저장소를 다시 분석해주세요.",
-                'error': "collection_not_found"
-            }
+            print(f"[WARNING] 컬렉션을 찾을 수 없음: {collection_name}")
+            
+            # 같은 레포지토리의 다른 세션 컬렉션 찾기
+            repo_url = session_data.get('repo_url', '')
+            if repo_url:
+                print(f"[DEBUG] 같은 레포지토리의 다른 컬렉션 검색 중...")
+                try:
+                    # 같은 레포지토리의 다른 세션들 조회
+                    user_id = session_data.get('user_id')
+                    if user_id:
+                        other_sessions = db.get_all_chat_sessions(user_id, repo_url)
+                        for other_session in other_sessions:
+                            if other_session['session_id'] != session_id:
+                                other_collection_name = f"repo_{other_session['session_id']}"
+                                if other_collection_name in collection_names:
+                                    print(f"[DEBUG] 대체 컬렉션 발견: {other_collection_name}")
+                                    collection_name = other_collection_name
+                                    break
+                except Exception as e:
+                    print(f"[WARNING] 대체 컬렉션 검색 실패: {e}")
+            
+            # 여전히 컬렉션을 찾지 못한 경우
+            if collection_name not in collection_names:
+                print(f"[ERROR] 사용 가능한 컬렉션을 찾을 수 없음")
+                return {
+                    'answer': f"저장소 분석 데이터를 찾을 수 없습니다.\n\n현재 세션: {session_id}\n사용 가능한 컬렉션: {', '.join(collection_names) if collection_names else '없음'}\n\n저장소를 다시 분석하거나 기존 채팅 세션을 사용해주세요.",
+                    'error': "collection_not_found"
+                }
         
         # 컬렉션 가져오기
         try:    
@@ -341,7 +372,7 @@ def handle_chat(session_id, message):
                 temperature=0.0,
                 max_tokens=64
             )
-            question_role_tag = tag_resp.choices[0].message.content.strip()
+            question_role_tag = tag_resp.choices[0].message.content.strip() if tag_resp.choices[0].message.content else ""
             print(f"[DEBUG] 질문 의도 태그: {question_role_tag}")
         except Exception as e:
             print(f"[WARNING] 질문 의도 태깅 실패: {e}")
@@ -425,9 +456,20 @@ def handle_chat(session_id, message):
         # 청크 스코어링 및 정렬
         scored_chunks = []
         if 'documents' in results and 'metadatas' in results and 'distances' in results:
-            if results['documents'][0] and results['metadatas'][0] and results['distances'][0]:
-                for doc, meta, distance in zip(results['documents'][0], results['metadatas'][0], results['distances'][0]):
-                    scored_chunks.append(score_chunk(doc, meta, distance))
+            documents_list = results.get('documents', [])
+            metadatas_list = results.get('metadatas', [])
+            distances_list = results.get('distances', [])
+            
+            if (documents_list and metadatas_list and distances_list and 
+                len(documents_list) > 0 and len(metadatas_list) > 0 and len(distances_list) > 0):
+                
+                documents = documents_list[0]
+                metadatas = metadatas_list[0]
+                distances = distances_list[0]
+                
+                if documents and metadatas and distances:
+                    for doc, meta, distance in zip(documents, metadatas, distances):
+                        scored_chunks.append(score_chunk(doc, meta, distance))
                 
                 # 점수 기준 내림차순 정렬
                 scored_chunks.sort(key=lambda x: x['score'], reverse=True)
@@ -661,22 +703,22 @@ def handle_chat(session_id, message):
                 'error': "empty_response"
             }
         
-        answer = response.choices[0].message.content.strip()
+        answer = response.choices[0].message.content.strip() if response.choices[0].message.content else ""
         print(f"[DEBUG] LLM 응답 성공 (길이: {len(answer)} 문자)")
         
         # 대화 기록 저장 (DB에만)
         try:
             print(f"[CHAT_HANDLER] 대화 기록 저장 시작 - 세션: {session_id}")
             
-            # 컨텍스트 정보가 포함된 사용자 메시지 생성 (파일명만 저장)
+            # 사용자 메시지 처리 (컨텍스트 정보는 사용자가 실제로 선택한 경우에만 저장)
             user_message_with_context = message
             
-            # 메시지에서 컨텍스트 정보 추출하여 파일명만 저장
+            # 사용자가 실제로 컨텍스트를 선택해서 질문한 경우에만 컨텍스트 정보 저장
             if '[선택된 파일 컨텍스트]' in message:
                 # 메시지를 질문 부분과 컨텍스트 부분으로 분리
                 parts = message.split('\n\n[선택된 파일 컨텍스트]\n')
                 if len(parts) > 1:
-                    user_message_with_context = parts[0]  # 질문 부분만
+                    question_part = parts[0]  # 질문 부분만
                     
                     # 컨텍스트에서 파일명만 추출
                     context_part = parts[1]
@@ -692,22 +734,10 @@ def handle_chat(session_id, message):
                     
                     # 파일명만 저장 (내용은 저장하지 않음)
                     if context_files:
-                        user_message_with_context += f"\n\n[선택된 파일: {', '.join(context_files)}]"
-            elif context_chunks:
-                # 새로운 방식으로 선택된 파일이 있는 경우
-                context_files = []
-                for chunk in context_chunks:
-                    # 메타데이터에서 파일명 추출
-                    if '[' in chunk and ']' in chunk:
-                        meta_part = chunk.split('\n')[0]
-                        if '파일명:' in meta_part:
-                            file_name = meta_part.split('파일명:')[1].split(',')[0].strip()
-                            if file_name not in context_files:
-                                context_files.append(file_name)
-                
-                # 파일명만 저장
-                if context_files:
-                    user_message_with_context += f"\n\n[선택된 파일: {', '.join(context_files)}]"
+                        user_message_with_context = f"{question_part}\n\n[컨텍스트 파일: {', '.join(context_files)}]"
+                    else:
+                        user_message_with_context = question_part
+            # 자동으로 검색된 컨텍스트는 저장하지 않음 (사용자가 명시적으로 선택하지 않았으므로)
             
             # 추가 보안: 메시지에서 파일 내용이 포함된 경우 제거
             # 파일 내용 패턴 제거 (코드 블록, 긴 텍스트 등)
@@ -738,6 +768,14 @@ def handle_chat(session_id, message):
             db.add_chat_history(session_id, 'user', user_message_with_context)
             db.add_chat_history(session_id, 'assistant', answer)
             print(f"[CHAT_HANDLER] DB에 대화 기록 저장 성공: session_id={session_id}")
+            
+            # chat_memory에도 대화 기록 저장
+            try:
+                chat_memory.save_conversation(session_id, user_message_with_context, answer)
+                print(f"[CHAT_HANDLER] chat_memory에 대화 기록 저장 성공: session_id={session_id}")
+            except Exception as memory_error:
+                print(f"[WARNING] chat_memory에 대화 기록 저장 실패: {memory_error}")
+                
         except Exception as e:
             print(f"[CHAT_HANDLER] DB에 대화 기록 저장 실패: {str(e)}")
         
@@ -1240,7 +1278,7 @@ def handle_modify_request(session_id, message):
                 'push_intent_message': push_intent_message
             }
         
-        llm_code = response.choices[0].message.content.strip()
+        llm_code = response.choices[0].message.content.strip() if response.choices[0].message.content else ""
         print(f"[DEBUG] 코드수정 LLM 응답 성공 (길이: {len(llm_code)} 문자)")
         
         # 대화 기록 저장 (DB에만)
@@ -1256,7 +1294,7 @@ def handle_modify_request(session_id, message):
                 # 메시지를 질문 부분과 컨텍스트 부분으로 분리
                 parts = message.split('\n\n[선택된 파일 컨텍스트]\n')
                 if len(parts) > 1:
-                    user_message_with_context = parts[0]  # 질문 부분만
+                    question_part = parts[0]  # 질문 부분만
                     
                     # 컨텍스트에서 파일명만 추출
                     context_part = parts[1]
@@ -1272,7 +1310,9 @@ def handle_modify_request(session_id, message):
                     
                     # 파일명만 저장 (내용은 저장하지 않음)
                     if context_files:
-                        user_message_with_context += f"\n\n[선택된 파일: {', '.join(context_files)}]"
+                        user_message_with_context = f"{question_part}\n\n[컨텍스트 파일: {', '.join(context_files)}]"
+                    else:
+                        user_message_with_context = question_part
             
             # 추가 보안: 메시지에서 파일 내용이 포함된 경우 제거
             lines = user_message_with_context.split('\n')
@@ -1409,7 +1449,7 @@ def detect_github_push_intent(message):
             temperature=0.0,
             max_tokens=2
         )
-        answer = response.choices[0].message.content.strip()
+        answer = response.choices[0].message.content.strip() if response.choices[0].message.content else ""
         print(f"[DEBUG] LLM 의도 감지 답변: {answer}")
         if answer.startswith("네"):
             return True

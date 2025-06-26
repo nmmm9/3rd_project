@@ -88,7 +88,8 @@ def login():
             return render_template('login.html')
         
         # 비밀번호 확인
-        if not bcrypt.checkpw(password.encode('utf-8'), user.get('password_hash').encode('utf-8')):
+        password_hash = user.get('password_hash')
+        if not password_hash or not bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8')):
             flash('사용자 이름 또는 비밀번호가 올바르지 않습니다.', 'error')
             return render_template('login.html')
         
@@ -260,7 +261,7 @@ def signup():
             return render_template('signup.html', signup_success=False)
         
         # 비밀번호 해싱
-        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8') if password else None
         
         # 사용자 생성
         success, result = db.create_user(
@@ -381,28 +382,86 @@ def new_chat():
     if not repo_url:
         return jsonify({'status': '에러', 'error': '레포지토리 URL이 필요합니다.'}), 400
     
+    # 먼저 해당 레포지토리가 분석되었는지 확인
+    existing_sessions = db.get_all_chat_sessions(user_id, repo_url)
+    if not existing_sessions:
+        return jsonify({
+            'status': '에러', 
+            'error': '분석되지 않은 저장소입니다. 먼저 저장소를 분석해주세요.',
+            'error_code': 'repo_not_analyzed'
+        }), 400
+    
     # 새 채팅 세션 생성
     session_id = db.create_new_chat_session(user_id, repo_url, token)
     
     if not session_id:
         return jsonify({'status': '에러', 'error': '새 채팅 생성 실패'}), 500
     
-    # 기존 세션에서 파일 정보 복사 (DB에서)
+    # 기존 세션에서 파일 정보 및 ChromaDB 데이터 복사
     try:
-        # 같은 레포의 기존 세션 찾기
-        existing_sessions = db.get_all_chat_sessions(user_id, repo_url)
-        if existing_sessions:
-            # 가장 최근 세션에서 파일 정보 복사
-            latest_session = existing_sessions[0]
-            existing_session_id = latest_session['session_id']
+        # 가장 최근 세션에서 파일 정보 복사
+        latest_session = existing_sessions[0]
+        existing_session_id = latest_session['session_id']
+        
+        if existing_session_id != session_id:  # 자기 자신이 아닌 경우만
+            # 1. DB에서 파일 정보 복사
+            files_data, directory_structure = db.get_session_files_data(existing_session_id)
+            if files_data or directory_structure:
+                db.update_session_files_data(session_id, files_data, directory_structure)
+                print(f"[DEBUG] 기존 세션 {existing_session_id}에서 파일 정보 복사 완료")
             
-            if existing_session_id != session_id:  # 자기 자신이 아닌 경우만
-                files_data, directory_structure = db.get_session_files_data(existing_session_id)
-                if files_data or directory_structure:
-                    db.update_session_files_data(session_id, files_data, directory_structure)
-                    print(f"[DEBUG] 기존 세션 {existing_session_id}에서 파일 정보 복사 완료")
+            # 2. ChromaDB 데이터 복사
+            try:
+                import os
+                import shutil
+                import time
+                
+                source_db_path = os.path.join("repo_analysis_db", existing_session_id)
+                target_db_path = os.path.join("repo_analysis_db", session_id)
+                
+                print(f"[DEBUG] ChromaDB 복사 시도: {source_db_path} -> {target_db_path}")
+                
+                if os.path.exists(source_db_path):
+                    # 기존 대상 경로가 있으면 삭제
+                    if os.path.exists(target_db_path):
+                        print(f"[DEBUG] 기존 대상 경로 삭제: {target_db_path}")
+                        shutil.rmtree(target_db_path)
+                        time.sleep(0.1)  # 파일 시스템 동기화 대기
+                    
+                    # 디렉토리 복사
+                    shutil.copytree(source_db_path, target_db_path)
+                    print(f"[DEBUG] ChromaDB 데이터 복사 완료: {source_db_path} -> {target_db_path}")
+                    
+                    # 복사 결과 검증
+                    if os.path.exists(target_db_path):
+                        copied_files = []
+                        for root, dirs, files in os.walk(target_db_path):
+                            copied_files.extend(files)
+                        print(f"[DEBUG] 복사된 파일 수: {len(copied_files)}")
+                    else:
+                        print(f"[ERROR] ChromaDB 복사 후 대상 경로가 존재하지 않음: {target_db_path}")
+                        
+                else:
+                    print(f"[WARNING] 소스 ChromaDB 경로가 존재하지 않음: {source_db_path}")
+                    print(f"[DEBUG] 현재 repo_analysis_db 디렉토리 내용:")
+                    if os.path.exists("repo_analysis_db"):
+                        for item in os.listdir("repo_analysis_db"):
+                            item_path = os.path.join("repo_analysis_db", item)
+                            if os.path.isdir(item_path):
+                                print(f"  - {item}/ (디렉토리)")
+                            else:
+                                print(f"  - {item} (파일)")
+                    else:
+                        print("  repo_analysis_db 디렉토리가 존재하지 않음")
+                        
+            except Exception as chroma_error:
+                import traceback
+                print(f"[ERROR] ChromaDB 데이터 복사 실패: {chroma_error}")
+                traceback.print_exc()
+                
     except Exception as e:
-        print(f"[ERROR] 세션 파일 정보 복사 실패: {e}")
+        print(f"[ERROR] 세션 데이터 복사 실패: {e}")
+        # 세션은 생성되었으므로 경고만 하고 계속 진행
     
     return jsonify({'status': '성공', 'session_id': session_id})
 
@@ -1078,49 +1137,90 @@ def generate_chat_md(chat_history, session_info):
     """채팅 기록을 마크다운 형식으로 변환"""
     import datetime
     
+    # 안전한 데이터 접근
+    if not session_info:
+        session_info = {}
+    
     # 헤더 정보
-    created_at = session_info.get('created_at', '')
+    created_at = session_info.get('created_at', '알 수 없음')
     repo_url = session_info.get('repo_url', '알 수 없음')
+    session_id = session_info.get('session_id', '알 수 없음')
+    session_name = session_info.get('name', '이름 없음')
     
     md_lines = [
         f"# 채팅 세션 기록",
         f"",
+        f"**세션 이름:** {session_name}",
         f"**저장소:** {repo_url}",
         f"**생성일:** {created_at}",
-        f"**세션 ID:** {session_info.get('session_id', '')}",
+        f"**세션 ID:** {session_id}",
         f"",
         f"---",
         f""
     ]
     
+    # 채팅 내역이 없는 경우 처리
+    if not chat_history or len(chat_history) == 0:
+        md_lines.extend([
+            f"## 채팅 기록",
+            f"",
+            f"*이 세션에는 채팅 기록이 없습니다.*",
+            f""
+        ])
+        return '\n'.join(md_lines)
+    
     # 채팅 내역 추가
     message_pair_count = 0
+    current_user_message = None
+    
     for message in chat_history:
         role = message.get('role', 'unknown')
         content = message.get('content', '')
         timestamp = message.get('timestamp', '')
         
+        # 빈 내용 체크
+        if not content or content.strip() == '':
+            continue
+            
         if role == 'user':
             message_pair_count += 1
+            current_user_message = {
+                'content': content,
+                'timestamp': timestamp,
+                'number': message_pair_count
+            }
+            
             md_lines.extend([
                 f"## 질문 #{message_pair_count}",
                 f"",
-                f"**시간:** {timestamp}",
+                f"**시간:** {timestamp if timestamp else '알 수 없음'}",
                 f"",
-                content,
+                f"{content}",
                 f"",
             ])
-        elif role == 'assistant':
+        elif role == 'assistant' and current_user_message:
             md_lines.extend([
-                f"## 답변 #{message_pair_count}",
+                f"## 답변 #{current_user_message['number']}",
                 f"",
-                f"**시간:** {timestamp}",
+                f"**시간:** {timestamp if timestamp else '알 수 없음'}",
                 f"",
-                content,
+                f"{content}",
                 f"",
                 f"---",
                 f""
             ])
+            current_user_message = None  # 답변이 완료되면 초기화
+    
+    # 마지막에 답변이 없는 질문이 있는 경우 처리
+    if current_user_message:
+        md_lines.extend([
+            f"## 답변 #{current_user_message['number']}",
+            f"",
+            f"*이 질문에 대한 답변이 아직 없습니다.*",
+            f"",
+            f"---",
+            f""
+        ])
     
     return '\n'.join(md_lines)
 
@@ -1129,96 +1229,185 @@ def get_branches(session_id):
     """세션의 레포지토리 브랜치 목록을 반환합니다."""
     # 로그인 여부 확인
     if 'user_id' not in session:
-        return jsonify({'error': '로그인이 필요합니다.'}), 401
+        print(f"[ERROR] 브랜치 API: 로그인 필요 (session_id: {session_id})")
+        return jsonify({'error': '로그인이 필요합니다.', 'success': False}), 401
     
     try:
+        print(f"[DEBUG] 브랜치 목록 조회 시작 - 세션: {session_id}")
+        
         # DB에서 세션 정보 조회
         session_data = db.get_session_data_from_db(session_id)
         if not session_data:
-            return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+            print(f"[ERROR] 브랜치 API: 세션 데이터 없음 (session_id: {session_id})")
+            return jsonify({'error': '세션을 찾을 수 없습니다.', 'success': False}), 404
+        
+        print(f"[DEBUG] 세션 데이터 조회 성공 - 키: {list(session_data.keys())}")
         
         repo_url = session_data.get('repo_url')
         if not repo_url:
-            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.'}), 404
+            print(f"[ERROR] 브랜치 API: repo_url 없음 (session_id: {session_id})")
+            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.', 'success': False}), 404
         
-        # GitHub 토큰 가져오기
-        github_token = session_data.get('github_token')
+        print(f"[DEBUG] 저장소 URL: {repo_url}")
+        
+        # GitHub 토큰 가져오기 (token 또는 github_token 모두 확인)
+        github_token = session_data.get('token') or session_data.get('github_token')
+        print(f"[DEBUG] GitHub 토큰 존재 여부: {bool(github_token)}")
         
         # 브랜치 목록 조회
+        print(f"[DEBUG] get_repository_branches 호출 시작")
         result = get_repository_branches(repo_url, github_token)
+        print(f"[DEBUG] get_repository_branches 결과: {result}")
         
         if result.get('success'):
+            print(f"[DEBUG] 브랜치 목록 조회 성공 - 브랜치 수: {len(result.get('branches', []))}")
             return jsonify(result)
         else:
-            return jsonify(result), 400
+            error_msg = result.get('error', '알 수 없는 오류')
+            print(f"[ERROR] 브랜치 목록 조회 실패: {error_msg}")
+            return jsonify({
+                'error': error_msg,
+                'success': False,
+                'repo_url': repo_url,
+                'has_token': bool(github_token)
+            }), 400
             
     except Exception as e:
-        print(f"[ERROR] 브랜치 목록 조회 실패: {str(e)}")
-        return jsonify({'error': f'브랜치 목록 조회 중 오류가 발생했습니다: {str(e)}'}), 500
+        import traceback
+        print(f"[ERROR] 브랜치 목록 조회 예외 발생: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': f'브랜치 목록 조회 중 오류가 발생했습니다: {str(e)}',
+            'success': False,
+            'session_id': session_id
+        }), 500
 
 @app.route('/api/files/<session_id>/<branch_name>')
 def get_file_tree(session_id, branch_name):
     """특정 브랜치의 파일 구조를 반환합니다."""
     # 로그인 여부 확인
     if 'user_id' not in session:
-        return jsonify({'error': '로그인이 필요합니다.'}), 401
+        print(f"[ERROR] 파일 구조 API: 로그인 필요 (session_id: {session_id}, branch: {branch_name})")
+        return jsonify({'error': '로그인이 필요합니다.', 'success': False}), 401
     
     try:
+        print(f"[DEBUG] 파일 구조 조회 시작 - 세션: {session_id}, 브랜치: {branch_name}")
+        
         # DB에서 세션 정보 조회
         session_data = db.get_session_data_from_db(session_id)
         if not session_data:
-            return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+            print(f"[ERROR] 파일 구조 API: 세션 데이터 없음 (session_id: {session_id})")
+            return jsonify({'error': '세션을 찾을 수 없습니다.', 'success': False}), 404
+        
+        print(f"[DEBUG] 세션 데이터 조회 성공 - 키: {list(session_data.keys())}")
         
         repo_url = session_data.get('repo_url')
         if not repo_url:
-            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.'}), 404
+            print(f"[ERROR] 파일 구조 API: repo_url 없음 (session_id: {session_id})")
+            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.', 'success': False}), 404
         
-        # GitHub 토큰 가져오기
-        github_token = session_data.get('github_token')
+        print(f"[DEBUG] 저장소 URL: {repo_url}")
+        
+        # GitHub 토큰 가져오기 (token 또는 github_token 모두 확인)
+        github_token = session_data.get('token') or session_data.get('github_token')
+        print(f"[DEBUG] GitHub 토큰 존재 여부: {bool(github_token)}")
         
         # 파일 구조 조회
+        print(f"[DEBUG] get_repository_file_tree 호출 시작")
         result = get_repository_file_tree(repo_url, branch_name, github_token)
+        print(f"[DEBUG] get_repository_file_tree 결과: {result}")
         
         if result.get('success'):
+            files_count = len(result.get('files', []))
+            dirs_count = len(result.get('directories', []))
+            print(f"[DEBUG] 파일 구조 조회 성공 - 파일: {files_count}개, 디렉토리: {dirs_count}개")
             return jsonify(result)
         else:
-            return jsonify(result), 400
+            error_msg = result.get('error', '알 수 없는 오류')
+            print(f"[ERROR] 파일 구조 조회 실패: {error_msg}")
+            return jsonify({
+                'error': error_msg,
+                'success': False,
+                'repo_url': repo_url,
+                'branch_name': branch_name,
+                'has_token': bool(github_token)
+            }), 400
             
     except Exception as e:
-        print(f"[ERROR] 파일 구조 조회 실패: {str(e)}")
-        return jsonify({'error': f'파일 구조 조회 중 오류가 발생했습니다: {str(e)}'}), 500
+        import traceback
+        print(f"[ERROR] 파일 구조 조회 예외 발생: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': f'파일 구조 조회 중 오류가 발생했습니다: {str(e)}',
+            'success': False,
+            'session_id': session_id,
+            'branch_name': branch_name
+        }), 500
 
 @app.route('/api/file-content/<session_id>/<branch_name>/<path:file_path>')
 def get_file_content_api(session_id, branch_name, file_path):
     """특정 파일의 내용을 반환합니다."""
     # 로그인 여부 확인
     if 'user_id' not in session:
-        return jsonify({'error': '로그인이 필요합니다.'}), 401
+        print(f"[ERROR] 파일 내용 API: 로그인 필요 (session_id: {session_id}, file: {file_path})")
+        return jsonify({'error': '로그인이 필요합니다.', 'success': False}), 401
     
     try:
+        print(f"[DEBUG] 파일 내용 조회 시작 - 세션: {session_id}, 브랜치: {branch_name}, 파일: {file_path}")
+        
         # DB에서 세션 정보 조회
         session_data = db.get_session_data_from_db(session_id)
         if not session_data:
-            return jsonify({'error': '세션을 찾을 수 없습니다.'}), 404
+            print(f"[ERROR] 파일 내용 API: 세션 데이터 없음 (session_id: {session_id})")
+            return jsonify({'error': '세션을 찾을 수 없습니다.', 'success': False}), 404
+        
+        print(f"[DEBUG] 세션 데이터 조회 성공 - 키: {list(session_data.keys())}")
         
         repo_url = session_data.get('repo_url')
         if not repo_url:
-            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.'}), 404
+            print(f"[ERROR] 파일 내용 API: repo_url 없음 (session_id: {session_id})")
+            return jsonify({'error': '저장소 URL을 찾을 수 없습니다.', 'success': False}), 404
         
-        # GitHub 토큰 가져오기
-        github_token = session_data.get('github_token')
+        print(f"[DEBUG] 저장소 URL: {repo_url}")
+        
+        # GitHub 토큰 가져오기 (token 또는 github_token 모두 확인)
+        github_token = session_data.get('token') or session_data.get('github_token')
+        print(f"[DEBUG] GitHub 토큰 존재 여부: {bool(github_token)}")
         
         # 파일 내용 조회
+        print(f"[DEBUG] get_file_content 호출 시작")
         result = get_file_content(repo_url, file_path, branch_name, github_token)
+        print(f"[DEBUG] get_file_content 결과: {result}")
         
         if result.get('success'):
+            content_length = len(result.get('content', ''))
+            print(f"[DEBUG] 파일 내용 조회 성공 - 파일 크기: {content_length} 문자")
             return jsonify(result)
         else:
-            return jsonify(result), 400
+            error_msg = result.get('error', '알 수 없는 오류')
+            print(f"[ERROR] 파일 내용 조회 실패: {error_msg}")
+            return jsonify({
+                'error': error_msg,
+                'success': False,
+                'repo_url': repo_url,
+                'file_path': file_path,
+                'branch_name': branch_name,
+                'has_token': bool(github_token),
+                'status_code': result.get('status_code'),
+                'message': result.get('message')
+            }), 400
             
     except Exception as e:
-        print(f"[ERROR] 파일 내용 조회 실패: {str(e)}")
-        return jsonify({'error': f'파일 내용 조회 중 오류가 발생했습니다: {str(e)}'}), 500
+        import traceback
+        print(f"[ERROR] 파일 내용 조회 예외 발생: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'error': f'파일 내용 조회 중 오류가 발생했습니다: {str(e)}',
+            'success': False,
+            'session_id': session_id,
+            'file_path': file_path,
+            'branch_name': branch_name
+        }), 500
 
 def get_google_provider_cfg():
     return requests.get(GOOGLE_DISCOVERY_URL).json()
@@ -1319,6 +1508,68 @@ def google_callback():
     }
     print(f"[DEBUG] Google 로그인 성공: {google_email}")
     return redirect(url_for('index'))
+
+@app.route('/cleanup-chat-context', methods=['POST'])
+def cleanup_chat_context():
+    """채팅 기록에서 잘못 저장된 컨텍스트 정보를 정리합니다."""
+    # 로그인 여부 확인
+    if 'user_id' not in session:
+        return jsonify({'status': '에러', 'error': '로그인이 필요합니다.'}), 401
+    
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'status': '에러', 'error': '세션 ID가 필요합니다.'}), 400
+        
+        # 세션 정보 조회
+        session_info = db.get_session_by_id(session_id)
+        if not session_info:
+            return jsonify({'status': '에러', 'error': '해당 세션을 찾을 수 없습니다.'}), 404
+        
+        # 현재 사용자의 세션인지 확인
+        if session_info['user_id'] != session.get('user_id'):
+            return jsonify({'status': '에러', 'error': '권한이 없습니다.'}), 403
+        
+        # 채팅 기록 조회 및 정리
+        chat_history = db.get_chat_history(session_id)
+        updated_count = 0
+        
+        if chat_history:
+            import re
+            for chat in chat_history:
+                if chat['role'] == 'user' and chat['content']:
+                    original_content = chat['content']
+                    # 잘못 저장된 컨텍스트 정보 제거 (사용자가 실제로 선택하지 않은 경우)
+                    cleaned_content = re.sub(r'\n*\[선택된 파일:[^\]]+\]', '', original_content).strip()
+                    
+                    if cleaned_content != original_content:
+                        # DB 업데이트
+                        try:
+                            conn = db.get_db_connection()
+                            if conn:
+                                with conn.cursor() as cursor:
+                                    cursor.execute(
+                                        "UPDATE chat_history SET content = %s WHERE id = %s",
+                                        (cleaned_content, chat['id'])
+                                    )
+                                conn.commit()
+                                updated_count += 1
+                                print(f"[DEBUG] 채팅 기록 정리: ID {chat['id']}")
+                                conn.close()
+                        except Exception as update_error:
+                            print(f"[ERROR] 채팅 기록 업데이트 실패: {update_error}")
+        
+        return jsonify({
+            'status': '성공',
+            'message': f'{updated_count}개의 채팅 기록이 정리되었습니다.',
+            'updated_count': updated_count
+        })
+    
+    except Exception as e:
+        print(f"[ERROR] 채팅 컨텍스트 정리 오류: {str(e)}")
+        return jsonify({'status': '에러', 'error': '서버 오류가 발생했습니다.'}), 500
 
 if __name__ == '__main__':
     app.run(debug=False) 

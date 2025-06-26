@@ -22,7 +22,7 @@ import re
 import openai
 import git
 import base64
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 from langchain.schema import Document
 from cryptography.fernet import Fernet
 import tiktoken
@@ -150,18 +150,26 @@ def get_repository_file_tree(repo_url: str, branch: str = 'main', token: Optiona
         Dict[str, Any]: 파일 구조 또는 에러 정보
     """
     try:
+        print(f"[DEBUG] get_repository_file_tree 시작: repo_url={repo_url}, branch={branch}, token={'있음' if token else '없음'}")
+        
         # URL에서 owner, repo 추출
         fetcher = GitHubRepositoryFetcher(repo_url, token)
         owner, repo = fetcher.owner, fetcher.repo
+        print(f"[DEBUG] 저장소 정보 추출: owner={owner}, repo={repo}")
         
         # GitHub API로 파일 트리 가져오기
         url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
         headers = {'Authorization': f'token {token}'} if token else {}
         
+        print(f"[DEBUG] GitHub API 호출: {url}")
+        print(f"[DEBUG] 헤더 존재: {'Authorization' in headers}")
+        
         response = requests.get(url, headers=headers)
+        print(f"[DEBUG] API 응답: status_code={response.status_code}")
         
         if response.status_code == 200:
             tree_data = response.json()
+            print(f"[DEBUG] 파일 트리 데이터 크기: {len(tree_data.get('tree', []))}")
             
             # 파일과 디렉토리를 구분하여 정리
             files = []
@@ -182,6 +190,8 @@ def get_repository_file_tree(repo_url: str, branch: str = 'main', token: Optiona
                         'type': 'directory'
                     })
             
+            print(f"[DEBUG] 파일 트리 정리 완료: 파일={len(files)}개, 디렉토리={len(directories)}개")
+            
             return {
                 'success': True,
                 'files': files,
@@ -190,13 +200,21 @@ def get_repository_file_tree(repo_url: str, branch: str = 'main', token: Optiona
                 'total_directories': len(directories)
             }
         else:
+            error_msg = f'파일 구조를 가져올 수 없습니다: {response.status_code}'
+            print(f"[ERROR] GitHub API 실패: {error_msg}")
+            print(f"[ERROR] 응답 내용: {response.text[:500]}")  # 처음 500자만 로그
             return {
                 'success': False,
-                'error': f'파일 구조를 가져올 수 없습니다: {response.status_code}',
-                'message': response.text
+                'error': error_msg,
+                'message': response.text,
+                'status_code': response.status_code,
+                'url': url
             }
             
     except Exception as e:
+        import traceback
+        print(f"[ERROR] get_repository_file_tree 예외 발생: {str(e)}")
+        traceback.print_exc()
         return {
             'success': False,
             'error': f'파일 구조 조회 중 오류 발생: {str(e)}'
@@ -216,25 +234,35 @@ def get_file_content(repo_url: str, file_path: str, branch: str = 'main', token:
         Dict[str, Any]: 파일 내용 또는 에러 정보
     """
     try:
+        print(f"[DEBUG] get_file_content 시작: repo_url={repo_url}, file_path={file_path}, branch={branch}, token={'있음' if token else '없음'}")
+        
         # URL에서 owner, repo 추출
         fetcher = GitHubRepositoryFetcher(repo_url, token)
         owner, repo = fetcher.owner, fetcher.repo
+        print(f"[DEBUG] 저장소 정보 추출: owner={owner}, repo={repo}")
         
         # GitHub API로 파일 내용 가져오기
         url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={branch}"
         headers = {'Authorization': f'token {token}'} if token else {}
         
+        print(f"[DEBUG] GitHub API 호출: {url}")
+        print(f"[DEBUG] 헤더 존재: {'Authorization' in headers}")
+        
         response = requests.get(url, headers=headers)
+        print(f"[DEBUG] API 응답: status_code={response.status_code}")
         
         if response.status_code == 200:
             file_data = response.json()
+            print(f"[DEBUG] 파일 데이터 수신: size={file_data.get('size', 0)}, encoding={file_data.get('encoding', 'unknown')}")
             
             # Base64로 인코딩된 내용을 디코딩
             if file_data.get('encoding') == 'base64':
                 try:
                     content = base64.b64decode(file_data['content']).decode('utf-8')
+                    print(f"[DEBUG] Base64 디코딩 성공: 내용 길이={len(content)}")
                 except UnicodeDecodeError:
                     # 바이너리 파일인 경우
+                    print(f"[DEBUG] 바이너리 파일 감지: {file_path}")
                     return {
                         'success': False,
                         'error': '바이너리 파일은 표시할 수 없습니다.',
@@ -242,6 +270,7 @@ def get_file_content(repo_url: str, file_path: str, branch: str = 'main', token:
                     }
             else:
                 content = file_data.get('content', '')
+                print(f"[DEBUG] 직접 내용 사용: 길이={len(content)}")
             
             return {
                 'success': True,
@@ -252,13 +281,21 @@ def get_file_content(repo_url: str, file_path: str, branch: str = 'main', token:
                 'encoding': file_data.get('encoding', 'utf-8')
             }
         else:
+            error_msg = f'파일 내용을 가져올 수 없습니다: {response.status_code}'
+            print(f"[ERROR] GitHub API 실패: {error_msg}")
+            print(f"[ERROR] 응답 내용: {response.text[:500]}")  # 처음 500자만 로그
             return {
                 'success': False,
-                'error': f'파일 내용을 가져올 수 없습니다: {response.status_code}',
-                'message': response.text
+                'error': error_msg,
+                'message': response.text,
+                'status_code': response.status_code,
+                'url': url
             }
             
     except Exception as e:
+        import traceback
+        print(f"[ERROR] get_file_content 예외 발생: {str(e)}")
+        traceback.print_exc()
         return {
             'success': False,
             'error': f'파일 내용 조회 중 오류 발생: {str(e)}'
@@ -318,7 +355,7 @@ class GitHubRepositoryFetcher:
             'status_code': status_code
         }
 
-    def handle_github_response(self, response: requests.Response, path: str = None) -> Dict[str, Any]:
+    def handle_github_response(self, response: requests.Response, path: Optional[str] = None) -> Dict[str, Any]:
         """
         GitHub API 응답 처리
         
@@ -399,7 +436,7 @@ class GitHubRepositoryFetcher:
                 print("[DEBUG] GitHub 클론 에러:", e)
                 raise
 
-    def get_repo_directory_contents(self, path: str = "") -> Optional[List[Dict[str, Any]]]:
+    def get_repo_directory_contents(self, path: str = "") -> Union[List[Dict[str, Any]], Dict[str, Any]]:
         """
         GitHub API를 사용하여 저장소의 디렉토리 내용을 가져옴
         
@@ -407,7 +444,7 @@ class GitHubRepositoryFetcher:
             path (str): 디렉토리 경로 (기본값: 루트 디렉토리)
             
         Returns:
-            Optional[List[Dict[str, Any]]]: 
+            Union[List[Dict[str, Any]], Dict[str, Any]]: 
                 디렉토리 내용 목록 또는 에러 정보
                 각 항목은 GitHub API 응답 형식의 파일/디렉토리 정보
         """
