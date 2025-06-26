@@ -67,7 +67,7 @@
 - Flask 라우트가 질문을 받아 → handle_chat() 함수가 실행됨
 
 - 질문 내용을 LLM에게 보내서 질문 의도(역할)를 파악
-   예) “로그인 처리 기능을 찾고 싶다”
+   예) "로그인 처리 기능을 찾고 싶다"
 
 - 질문도 임베딩해서 관련된 청크를 찾아냄
 
@@ -86,7 +86,7 @@
     - 디렉토리 구조
     - 이전 대화 기록
 
-- 시스템 프롬프트: “당신은 GitHub 코드 분석 전문가입니다” ← 역할을 지정
+- 시스템 프롬프트: "당신은 GitHub 코드 분석 전문가입니다" ← 역할을 지정
 
 - LLM이 질문에 대해 근거 있는 응답을 생성해서 사용자에게 반환
 
@@ -94,7 +94,7 @@
 
 - 어떤 코드 청크가 관련 있는지 찾음 (임베딩 + 역할 태그)
 
-- LLM에게 “이 코드를 이렇게 바꿔줘”라고 지시
+- LLM에게 "이 코드를 이렇게 바꿔줘"라고 지시
 
 - LLM이 diff 형식(변경 전/후 줄 비교)으로 수정사항을 제안
 
@@ -124,9 +124,53 @@
 
 
 - 의미 기반 검색 시스템 구현
-  - 질문과 코드에 역할 태그 자동 부여 → 단순 키워드 검색보다 정확한 맥락 기반 응답 제공
+  - 질문과 코드에 역할 태그 자동 부여 → 단순 키워드 검색보다 정확한 맥락 기반 응답 제공
 
 
 - 코드 어시스턴트
   - LLM 수정 제안 → 사용자 확인 → Git 커밋 자동 처리
   → 실질적인 AI 기반 프로그래밍 도우미 실현
+
+## 🚀 AWS 배포 설정 가이드
+
+### 1. 환경 변수 설정
+AWS에서 다음 환경 변수들을 설정해야 합니다:
+
+```bash
+# GitHub OAuth 설정
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+
+# Google OAuth 설정  
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+# OpenAI API 키
+OPENAI_API_KEY=your_openai_api_key
+
+# AWS 배포 설정
+SERVER_NAME=your-aws-domain.com  # AWS 도메인 (포트 제외)
+PORT=5000
+
+# 데이터베이스 설정 (GCP MySQL)
+DB_HOST=your-gcp-mysql-host
+DB_PORT=3306
+DB_NAME=your_database_name
+DB_USER=your_database_user
+DB_PASSWORD=your_database_password
+```
+
+### 2. OAuth 콜백 URL 설정
+- **GitHub OAuth 앱 설정**: `https://your-aws-domain.com/github/callback`
+- **Google OAuth 앱 설정**: `https://your-aws-domain.com/google/callback`
+
+### 3. 주요 수정 사항
+- `app.py`에서 AWS 배포를 위한 설정이 추가되었습니다
+- `SERVER_NAME` 환경 변수로 도메인을 설정하여 OAuth 콜백이 올바르게 작동하도록 수정
+- HTTPS 사용을 위한 `PREFERRED_URL_SCHEME` 설정 추가
+
+### 4. 배포 시 주의사항
+1. AWS에서 `SERVER_NAME` 환경 변수를 반드시 설정하세요 (예: `your-domain.com`)
+2. GitHub/Google OAuth 앱에서 콜백 URL을 AWS 도메인으로 업데이트하세요
+3. GCP MySQL 데이터베이스 연결 정보를 환경 변수로 설정하세요
+4. 모든 API 키와 시크릿은 환경 변수로 관리하세요
