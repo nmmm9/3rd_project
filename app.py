@@ -55,7 +55,7 @@ app.secret_key = os.urandom(24) # Flask 세션을 위한 secret_key 설정
 
 # AWS 배포를 위한 설정
 app.config['SERVER_NAME'] = os.environ.get('SERVER_NAME')  # AWS 도메인 설정
-app.config['PREFERRED_URL_SCHEME'] = 'https'  # HTTPS 사용
+app.config['PREFERRED_URL_SCHEME'] = os.environ.get('PREFERRED_URL_SCHEME', 'http')  # HTTP/HTTPS 동적 설정
 
 @app.route('/')
 def home():
