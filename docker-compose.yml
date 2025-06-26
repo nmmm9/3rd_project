@@ -21,6 +21,7 @@ services:
       - "80:80"             # 외부 접속 허용 (http)
     volumes:
       - /home/ubuntu/nginx.conf:/etc/nginx/nginx.conf
+      - ./static:/app/static
     depends_on:
       - web
     networks:

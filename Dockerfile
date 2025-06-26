@@ -18,4 +18,4 @@ COPY . .
 EXPOSE 5000
 
 # Command to run the application (필요에 따라 수정)
-CMD ["sh", "-c", "gunicorn -b 0.0.0.0:5000 --workers 10 --timeout 300 app:app"]
+CMD ["sh", "-c", "gunicorn -b 0.0.0.0:5000 --timeout 300 app:app"]
