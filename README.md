@@ -151,6 +151,7 @@ OPENAI_API_KEY=your_openai_api_key
 # AWS 배포 설정
 SERVER_NAME=your-aws-domain.com  # AWS 도메인 (포트 제외)
 PORT=5000
+PREFERRED_URL_SCHEME=http  # Docker 환경에서는 http 사용
 
 # 데이터베이스 설정 (GCP MySQL)
 DB_HOST=your-gcp-mysql-host
@@ -161,13 +162,13 @@ DB_PASSWORD=your_database_password
 ```
 
 ### 2. OAuth 콜백 URL 설정
-- **GitHub OAuth 앱 설정**: `https://your-aws-domain.com/github/callback`
-- **Google OAuth 앱 설정**: `https://your-aws-domain.com/google/callback`
+- **GitHub OAuth 앱 설정**: `http://your-aws-domain.com/github/callback` (Docker 환경)
+- **Google OAuth 앱 설정**: `http://your-aws-domain.com/google/callback` (Docker 환경)
 
 ### 3. 주요 수정 사항
 - `app.py`에서 AWS 배포를 위한 설정이 추가되었습니다
 - `SERVER_NAME` 환경 변수로 도메인을 설정하여 OAuth 콜백이 올바르게 작동하도록 수정
-- HTTPS 사용을 위한 `PREFERRED_URL_SCHEME` 설정 추가
+- HTTP/HTTPS 동적 설정을 위한 `PREFERRED_URL_SCHEME` 설정 추가 (Docker 환경에서는 http 사용)
 
 ### 4. 배포 시 주의사항
 1. AWS에서 `SERVER_NAME` 환경 변수를 반드시 설정하세요 (예: `your-domain.com`)

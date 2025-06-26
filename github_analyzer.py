@@ -108,30 +108,66 @@ def get_repository_branches(repo_url: str, token: Optional[str] = None) -> Dict[
         Dict[str, Any]: 브랜치 목록 또는 에러 정보
     """
     try:
+        print(f"[DEBUG] get_repository_branches 시작: repo_url={repo_url}, token={'있음' if token else '없음'}")
+        
         # URL에서 owner, repo 추출
         fetcher = GitHubRepositoryFetcher(repo_url, token)
         owner, repo = fetcher.owner, fetcher.repo
+        print(f"[DEBUG] 저장소 정보 추출: owner={owner}, repo={repo}")
         
         # GitHub API로 브랜치 목록 가져오기
         url = f"https://api.github.com/repos/{owner}/{repo}/branches"
-        headers = {'Authorization': f'token {token}'} if token else {}
+        headers = {
+            'User-Agent': 'GitHub-Code-Analyzer/1.0',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        if token:
+            headers['Authorization'] = f'token {token}'
         
-        response = requests.get(url, headers=headers)
+        print(f"[DEBUG] GitHub API 호출: {url}")
+        print(f"[DEBUG] 헤더 존재: {'Authorization' in headers}")
+        print(f"[DEBUG] 토큰 첫 8자리: {token[:8] if token else 'None'}...")
+        
+        response = requests.get(url, headers=headers, timeout=30)
+        print(f"[DEBUG] API 응답: status_code={response.status_code}")
         
         if response.status_code == 200:
             branches = response.json()
+            print(f"[DEBUG] 브랜치 목록 수신: {len(branches)}개")
+            branch_list = [{'name': branch['name'], 'sha': branch['commit']['sha']} for branch in branches]
+            print(f"[DEBUG] 브랜치 이름들: {[b['name'] for b in branch_list]}")
             return {
                 'success': True,
-                'branches': [{'name': branch['name'], 'sha': branch['commit']['sha']} for branch in branches]
+                'branches': branch_list
             }
         else:
+            error_msg = f'브랜치 목록을 가져올 수 없습니다: {response.status_code}'
+            print(f"[ERROR] GitHub API 실패: {error_msg}")
+            print(f"[ERROR] 응답 내용: {response.text[:500]}")  # 처음 500자만 로그
             return {
                 'success': False,
-                'error': f'브랜치 목록을 가져올 수 없습니다: {response.status_code}',
-                'message': response.text
+                'error': error_msg,
+                'message': response.text,
+                'status_code': response.status_code,
+                'url': url
             }
             
+    except requests.exceptions.Timeout as e:
+        print(f"[ERROR] GitHub API 타임아웃: {str(e)}")
+        return {
+            'success': False,
+            'error': f'GitHub API 타임아웃 발생: {str(e)}'
+        }
+    except requests.exceptions.ConnectionError as e:
+        print(f"[ERROR] GitHub API 연결 오류: {str(e)}")
+        return {
+            'success': False,
+            'error': f'GitHub API 연결 실패: {str(e)}'
+        }
     except Exception as e:
+        import traceback
+        print(f"[ERROR] get_repository_branches 예외 발생: {str(e)}")
+        traceback.print_exc()
         return {
             'success': False,
             'error': f'브랜치 목록 조회 중 오류 발생: {str(e)}'
@@ -159,7 +195,12 @@ def get_repository_file_tree(repo_url: str, branch: str = 'main', token: Optiona
         
         # GitHub API로 파일 트리 가져오기
         url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
-        headers = {'Authorization': f'token {token}'} if token else {}
+        headers = {
+            'User-Agent': 'GitHub-Code-Analyzer/1.0',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        if token:
+            headers['Authorization'] = f'token {token}'
         
         print(f"[DEBUG] GitHub API 호출: {url}")
         print(f"[DEBUG] 헤더 존재: {'Authorization' in headers}")
@@ -243,7 +284,12 @@ def get_file_content(repo_url: str, file_path: str, branch: str = 'main', token:
         
         # GitHub API로 파일 내용 가져오기
         url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={branch}"
-        headers = {'Authorization': f'token {token}'} if token else {}
+        headers = {
+            'User-Agent': 'GitHub-Code-Analyzer/1.0',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        if token:
+            headers['Authorization'] = f'token {token}'
         
         print(f"[DEBUG] GitHub API 호출: {url}")
         print(f"[DEBUG] 헤더 존재: {'Authorization' in headers}")
