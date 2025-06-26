@@ -1571,5 +1571,10 @@ def cleanup_chat_context():
         print(f"[ERROR] 채팅 컨텍스트 정리 오류: {str(e)}")
         return jsonify({'status': '에러', 'error': '서버 오류가 발생했습니다.'}), 500
 
+
+@app.route('/health')
+def health():
+    return '', 200
+
 if __name__ == '__main__':
     app.run(debug=False) 
