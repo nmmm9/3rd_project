@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  web:
+    image: ansirh/github_analyzer
+    container_name: FLASK_APP
+    expose:
+      - "5000"
+    env_file:
+      - .env
+    # volumes:
+    #   - .:/app
+    # environment:
+    #   - FLASK_APP=app.py
+    networks:
+      - webnet
+  nginx:
+    image: nginx:latest
+    container_name: nginx_proxy
+    ports:
+      - "80:80"             # 외부 접속 허용 (http)
+    volumes:
+      - /home/ubuntu/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - web
+    networks:
+      - webnet
+
+networks:
+  webnet:
