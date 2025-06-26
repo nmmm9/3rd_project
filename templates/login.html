@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Login Form</title>
+  <!-- Three.js 라이브러리 추가 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <style>
     body {
       background-color: #111827;
@@ -21,13 +24,33 @@
       border-radius: 12px;
       background-color: #111827;
       padding: 2rem;
-      box-sizing: border-box; /* ✅ 이 줄 추가 */
+      box-sizing: border-box;
+      position: relative;
+      z-index: 10;
     }
 
     .title {
       text-align: center;
       font-size: 1.5rem;
       font-weight: 700;
+      margin-top: 3rem;
+    }
+
+    /* 3D 캐릭터 컨테이너 */
+    .character-container {
+      position: absolute;
+      top: -140px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 220px;
+      height: 220px;
+      z-index: 5;
+      overflow: visible;
+    }
+
+    #character-canvas {
+      width: 100%;
+      height: 100%;
     }
 
     .form {
@@ -47,7 +70,7 @@
 
     .input-group input {
       width: 100%;
-      box-sizing: border-box; /* ✅ 이 줄 추가 */
+      box-sizing: border-box;
       border-radius: 6px;
       border: 1px solid #374151;
       background-color: #111827;
@@ -151,6 +174,10 @@
 </head>
 <body>
   <div class="form-container">
+    <!-- 3D 캐릭터 -->
+    <div class="character-container">
+      <canvas id="character-canvas"></canvas>
+    </div>
     <p class="title">Login</p>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -196,5 +223,408 @@
       <a href="/signup">Sign up</a>
     </p>
   </div>
+
+  <script>
+    // 3D 캐릭터 클래스
+    class LoginCharacter {
+      constructor() {
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+        this.renderer = new THREE.WebGLRenderer({ 
+          canvas: document.getElementById('character-canvas'),
+          alpha: true,
+          antialias: true
+        });
+        
+        this.character = null;
+        this.loader = new THREE.GLTFLoader();
+        this.currentInput = null;
+        this.mixer = null;
+        this.actions = {};
+        this.isPasswordField = false;
+        
+        this.init();
+      }
+
+      init() {
+        // 렌더러 설정
+        this.renderer.setSize(220, 220);
+        this.renderer.setClearColor(0x000000, 0);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        // 카메라 위치
+        this.camera.position.set(0, 0, 3.5);
+        this.camera.lookAt(0, 0, 0);
+
+        // 조명 설정
+        this.setupLights();
+
+        // 캐릭터 로드
+        this.loadCharacter();
+
+        // 입력 필드 이벤트 리스너
+        this.setupInputListeners();
+
+        // 애니메이션 시작
+        this.animate();
+      }
+
+      setupLights() {
+        // 기본 환경광 (전체적인 밝기)
+        const ambientLight = new THREE.AmbientLight(0x404080, 0.8);
+        this.scene.add(ambientLight);
+
+        // === 메인 조명들 ===
+        
+        // 메인 방향광 (태양광 역할 - 우상단에서)
+        const mainDirectionalLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        mainDirectionalLight.position.set(15, 20, 10);
+        mainDirectionalLight.castShadow = true;
+        mainDirectionalLight.shadow.mapSize.width = 4096;
+        mainDirectionalLight.shadow.mapSize.height = 4096;
+        mainDirectionalLight.shadow.camera.near = 0.1;
+        mainDirectionalLight.shadow.camera.far = 100;
+        mainDirectionalLight.shadow.camera.left = -20;
+        mainDirectionalLight.shadow.camera.right = 20;
+        mainDirectionalLight.shadow.camera.top = 20;
+        mainDirectionalLight.shadow.camera.bottom = -20;
+        this.scene.add(mainDirectionalLight);
+
+        // 보조 방향광 (좌상단에서 - 부드러운 조명)
+        const secondaryDirectionalLight = new THREE.DirectionalLight(0xe6f3ff, 1.2);
+        secondaryDirectionalLight.position.set(-12, 15, 8);
+        this.scene.add(secondaryDirectionalLight);
+
+        // 백라이트 방향광 (뒤쪽에서 - 윤곽선 강조)
+        const backLight = new THREE.DirectionalLight(0x80c0ff, 1.0);
+        backLight.position.set(0, 8, -15);
+        this.scene.add(backLight);
+
+        // === 포인트 라이트들 (다양한 각도) ===
+        
+        // 전면 좌측 포인트 라이트 (따뜻한 색상)
+        const frontLeftLight = new THREE.PointLight(0xfff0e6, 1.5, 25);
+        frontLeftLight.position.set(-8, 3, 6);
+        this.scene.add(frontLeftLight);
+
+        // 전면 우측 포인트 라이트 (차가운 색상)
+        const frontRightLight = new THREE.PointLight(0xe6f0ff, 1.3, 25);
+        frontRightLight.position.set(8, 2, 6);
+        this.scene.add(frontRightLight);
+
+        // 상단 중앙 포인트 라이트 (밝은 흰색)
+        const topCenterLight = new THREE.PointLight(0xffffff, 1.8, 20);
+        topCenterLight.position.set(0, 12, 0);
+        this.scene.add(topCenterLight);
+
+        // 하단 좌측 포인트 라이트 (파란색 톤)
+        const bottomLeftLight = new THREE.PointLight(0x4080ff, 0.8, 15);
+        bottomLeftLight.position.set(-6, -2, 3);
+        this.scene.add(bottomLeftLight);
+
+        // 하단 우측 포인트 라이트 (주황색 톤)
+        const bottomRightLight = new THREE.PointLight(0xff8040, 0.8, 15);
+        bottomRightLight.position.set(6, -2, 3);
+        this.scene.add(bottomRightLight);
+
+        // 뒤쪽 좌측 포인트 라이트 (보라색 톤)
+        const backLeftLight = new THREE.PointLight(0x8040ff, 0.6, 18);
+        backLeftLight.position.set(-4, 4, -8);
+        this.scene.add(backLeftLight);
+
+        // 뒤쪽 우측 포인트 라이트 (청록색 톤)
+        const backRightLight = new THREE.PointLight(0x40ff80, 0.6, 18);
+        backRightLight.position.set(4, 4, -8);
+        this.scene.add(backRightLight);
+
+        // === 스팟라이트들 (집중 조명) ===
+        
+        // 캐릭터 집중 스팟라이트
+        const characterSpotLight = new THREE.SpotLight(0xffffff, 1.2, 30, Math.PI / 6, 0.3);
+        characterSpotLight.position.set(0, 10, 8);
+        characterSpotLight.target.position.set(1.8, -0.1, 0); // 캐릭터 위치에 맞춤
+        this.scene.add(characterSpotLight);
+        this.scene.add(characterSpotLight.target);
+
+        // === 움직이는 조명들 (동적 효과) ===
+        
+        // 회전하는 컬러 라이트 1
+        const rotatingLight1 = new THREE.PointLight(0xff4080, 0.8, 20);
+        rotatingLight1.position.set(5, 6, 0);
+        this.scene.add(rotatingLight1);
+        this.rotatingLights = this.rotatingLights || [];
+        this.rotatingLights.push({
+          light: rotatingLight1,
+          radius: 8,
+          speed: 0.01,
+          height: 6,
+          angle: 0
+        });
+
+        // 회전하는 컬러 라이트 2
+        const rotatingLight2 = new THREE.PointLight(0x4080ff, 0.8, 20);
+        rotatingLight2.position.set(-5, 6, 0);
+        this.scene.add(rotatingLight2);
+        this.rotatingLights.push({
+          light: rotatingLight2,
+          radius: 8,
+          speed: -0.008,
+          height: 6,
+          angle: Math.PI
+        });
+
+        // 맥동하는 조명 (펄스 효과)
+        const pulsingLight = new THREE.PointLight(0x80ff80, 1.0, 25);
+        pulsingLight.position.set(0, 0, 10);
+        this.scene.add(pulsingLight);
+        this.pulsingLight = pulsingLight;
+
+        // === 장식용 조명들 ===
+        
+        // 원형으로 배치된 작은 조명들
+        const circleRadius = 12;
+        const numCircleLights = 8;
+        this.circleLights = [];
+        
+        for (let i = 0; i < numCircleLights; i++) {
+          const angle = (i / numCircleLights) * Math.PI * 2;
+          const x = Math.cos(angle) * circleRadius;
+          const z = Math.sin(angle) * circleRadius;
+          
+          const hue = (i / numCircleLights) * 360;
+          const color = new THREE.Color().setHSL(hue / 360, 0.7, 0.6);
+          
+          const circleLight = new THREE.PointLight(color, 0.4, 15);
+          circleLight.position.set(x, 8, z);
+          this.scene.add(circleLight);
+          
+          this.circleLights.push({
+            light: circleLight,
+            originalIntensity: 0.4,
+            phase: i * 0.5
+          });
+        }
+
+        console.log('고급 다각도 조명 시스템 초기화 완료!');
+      }
+
+      loadCharacter() {
+        this.loader.load(
+          '/static/c.glb',
+          (gltf) => {
+            this.character = gltf.scene;
+            this.character.scale.set(0.6, 0.6, 0.6); // 객체 크기를 더 작게
+            this.character.position.set(1.8, -0.1, 0); // Y축을 더 위로 이동
+            
+            // 애니메이션 설정
+            if (gltf.animations && gltf.animations.length > 0) {
+              this.mixer = new THREE.AnimationMixer(this.character);
+              
+              gltf.animations.forEach((clip, index) => {
+                const action = this.mixer.clipAction(clip);
+                this.actions[index] = action;
+                
+                if (index === 0) {
+                  // 기본 애니메이션 (눈 뜬 상태)
+                  action.play();
+                }
+              });
+            }
+            
+            // 그림자 설정
+            this.character.traverse((child) => {
+              if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+              }
+            });
+
+            this.scene.add(this.character);
+          },
+          (progress) => {
+            console.log('Loading character:', (progress.loaded / progress.total * 100) + '%');
+          },
+          (error) => {
+            console.error('Error loading character:', error);
+          }
+        );
+      }
+
+      setupInputListeners() {
+        const inputs = document.querySelectorAll('input[type="text"], input[type="password"]');
+        
+        inputs.forEach(input => {
+          input.addEventListener('focus', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+
+          input.addEventListener('blur', () => {
+            this.currentInput = null;
+            this.isPasswordField = false;
+            this.switchToEyesOpen();
+          });
+
+          // 실시간 커서 위치 추적을 위한 이벤트들
+          input.addEventListener('input', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+
+          input.addEventListener('keyup', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+
+          input.addEventListener('click', () => {
+            this.currentInput = input;
+            this.checkPasswordField();
+          });
+        });
+      }
+
+      checkPasswordField() {
+        if (this.currentInput) {
+          const isPassword = this.currentInput.type === 'password';
+          if (isPassword && !this.isPasswordField) {
+            this.isPasswordField = true;
+            this.switchToEyesClosed();
+          } else if (!isPassword && this.isPasswordField) {
+            this.isPasswordField = false;
+            this.switchToEyesOpen();
+          }
+        }
+      }
+
+      switchToEyesOpen() {
+        if (this.actions[0] && this.actions[1]) {
+          this.actions[1].stop();
+          this.actions[0].reset().play();
+        }
+      }
+
+      switchToEyesClosed() {
+        if (this.actions[0] && this.actions[1]) {
+          this.actions[0].stop();
+          this.actions[1].reset().play();
+        }
+      }
+
+      // 동적 조명 효과 업데이트
+      updateDynamicLights(currentTime) {
+        // 회전하는 조명들 업데이트
+        if (this.rotatingLights) {
+          this.rotatingLights.forEach(rotatingLight => {
+            rotatingLight.angle += rotatingLight.speed;
+            
+            const x = Math.cos(rotatingLight.angle) * rotatingLight.radius;
+            const z = Math.sin(rotatingLight.angle) * rotatingLight.radius;
+            
+            rotatingLight.light.position.x = x;
+            rotatingLight.light.position.z = z;
+            rotatingLight.light.position.y = rotatingLight.height + Math.sin(currentTime * 0.003) * 2;
+          });
+        }
+
+        // 맥동하는 조명 업데이트
+        if (this.pulsingLight) {
+          const pulseIntensity = 1.0 + Math.sin(currentTime * 0.005) * 0.5;
+          this.pulsingLight.intensity = pulseIntensity;
+          
+          // 색상도 변화
+          const hue = (currentTime * 0.0005) % 1;
+          this.pulsingLight.color.setHSL(hue, 0.7, 0.6);
+        }
+
+        // 원형 조명들 트윙클 효과
+        if (this.circleLights) {
+          this.circleLights.forEach((circleLight, index) => {
+            const phase = circleLight.phase + currentTime * 0.001;
+            const intensity = circleLight.originalIntensity * (0.5 + Math.sin(phase) * 0.5);
+            circleLight.light.intensity = intensity;
+            
+            // 각 조명마다 다른 색상 변화
+            const hue = ((currentTime * 0.0002) + index * 0.125) % 1;
+            circleLight.light.color.setHSL(hue, 0.8, 0.7);
+          });
+        }
+      }
+
+      animate() {
+        requestAnimationFrame(() => this.animate());
+
+        if (this.character) {
+          const time = Date.now() * 0.001;
+          
+          // 동적 조명 효과 업데이트
+          this.updateDynamicLights(Date.now());
+          
+          // 애니메이션 믹서 업데이트
+          if (this.mixer) {
+            this.mixer.update(0.016); // 60fps 기준
+          }
+          
+          // 기본 부유 효과
+          this.character.position.y = -0.5 + Math.sin(time * 2) * 0.05;
+          
+          if (this.currentInput) {
+            // 포커스된 입력 필드 쪽으로 고개 돌리기 (실시간 추적)
+            const inputRect = this.currentInput.getBoundingClientRect();
+            const containerRect = document.querySelector('.character-container').getBoundingClientRect();
+            
+            // 타이핑 위치 추적 (커서 위치 계산)
+            let cursorX = inputRect.left;
+            if (this.currentInput.value) {
+              // 입력된 텍스트 길이에 따른 커서 위치 추정
+              const textWidth = this.currentInput.value.length * 8; // 대략적인 글자 폭
+              cursorX = inputRect.left + Math.min(textWidth, inputRect.width - 20);
+            }
+            
+            // 입력 필드의 위치 계산 (커서 위치 기반)
+            const inputCenterY = inputRect.top + inputRect.height / 2;
+            
+            // 캐릭터 컨테이너의 중앙 위치 계산
+            const containerCenterX = containerRect.left + containerRect.width / 2;
+            const containerCenterY = containerRect.top + containerRect.height / 2;
+            
+            // 상대적 위치 계산
+            const relativeX = cursorX - containerCenterX;
+            const relativeY = inputCenterY - containerCenterY;
+            
+            // 거리에 따른 시선 각도 조정 (더 자연스럽게)
+            const maxDistanceX = 150; // X축 최대 감지 거리
+            const maxDistanceY = 100; // Y축 최대 감지 거리
+            const normalizedX = Math.max(-1, Math.min(1, relativeX / maxDistanceX));
+            const normalizedY = Math.max(-1, Math.min(1, relativeY / maxDistanceY));
+            
+            // 부드러운 시선 이동 (lerp 적용)
+            const lerpFactor = 0.1;
+            const targetRotationY = normalizedX * 0.4;
+            const targetRotationX = normalizedY * 0.3;
+            
+            this.character.rotation.y += (targetRotationY - this.character.rotation.y) * lerpFactor;
+            this.character.rotation.x += (targetRotationX - this.character.rotation.x) * lerpFactor;
+          } else {
+            // 기본 상태: 부드럽게 정면으로 돌아가기
+            const lerpFactor = 0.05;
+            this.character.rotation.y += (0 - this.character.rotation.y) * lerpFactor;
+            this.character.rotation.x += (0 - this.character.rotation.x) * lerpFactor;
+          }
+          
+          // 약간의 자연스러운 움직임
+          this.character.rotation.z = Math.sin(time * 1.5) * 0.02;
+        }
+
+        this.renderer.render(this.scene, this.camera);
+      }
+    }
+
+    // 페이지 로드 후 캐릭터 초기화
+    document.addEventListener('DOMContentLoaded', () => {
+      new LoginCharacter();
+    });
+  </script>
+
 </body>
 </html>
