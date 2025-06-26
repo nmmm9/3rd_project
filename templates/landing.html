@@ -379,34 +379,34 @@
       window.addEventListener('resize', () => this.onWindowResize());
     }
 
-    setupLights() {
-      // 환경광 (더 밝게)
-      const ambientLight = new THREE.AmbientLight(0x808080, 1.2);
-      this.scene.add(ambientLight);
+          setupLights() {
+        // 환경광 (더 밝게)
+        const ambientLight = new THREE.AmbientLight(0x808080, 1.2);
+        this.scene.add(ambientLight);
 
-      // 방향광 (더 밝게)
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.8);
-      directionalLight.position.set(10, 10, 5);
-      directionalLight.castShadow = true;
-      directionalLight.shadow.mapSize.width = 2048;
-      directionalLight.shadow.mapSize.height = 2048;
-      this.scene.add(directionalLight);
+        // 방향광 (더 밝게)
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.8);
+        directionalLight.position.set(10, 10, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        this.scene.add(directionalLight);
 
-      // 추가 방향광 (반대편에서)
-      const directionalLight2 = new THREE.DirectionalLight(0xffffff, 1.2);
-      directionalLight2.position.set(-10, 8, -5);
-      this.scene.add(directionalLight2);
+        // 추가 방향광 (반대편에서)
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 1.2);
+        directionalLight2.position.set(-10, 8, -5);
+        this.scene.add(directionalLight2);
 
-      // 포인트 라이트 (파란색 강조, 더 밝게)
-      const pointLight = new THREE.PointLight(0x2793ce, 1.5, 100);
-      pointLight.position.set(0, 5, 0);
-      this.scene.add(pointLight);
+        // 추가 포인트 라이트 (흰색)
+        const pointLight2 = new THREE.PointLight(0xffffff, 1.0, 80);
+        pointLight2.position.set(5, 3, 5);
+        this.scene.add(pointLight2);
 
-      // 추가 포인트 라이트 (흰색)
-      const pointLight2 = new THREE.PointLight(0xffffff, 1.0, 80);
-      pointLight2.position.set(5, 3, 5);
-      this.scene.add(pointLight2);
-    }
+        // 새로운 방향광 (위쪽에서)
+        const directionalLight3 = new THREE.DirectionalLight(0xffffff, 1.4);
+        directionalLight3.position.set(0, 15, 0);
+        this.scene.add(directionalLight3);
+      }
 
          loadObjects() {
              const objectPaths = [
@@ -706,15 +706,17 @@
       console.log('파티클 생성 시작...');
       
       for (let i = 0; i < 30; i++) {
-        this.createParticle();
+        setTimeout(() => this.createParticle(), i * 100);
       }
       
-      console.log(`${this.particles.length}개의 파티클이 생성되었습니다.`);
+      console.log(`파티클 생성 시작됨`);
       
       setInterval(() => {
         if (this.particles.length < 50) {
           this.createParticle();
         }
+        // 주기적으로 완료된 파티클 정리
+        this.cleanupParticles();
       }, 800);
     }
 
@@ -732,8 +734,11 @@
       particle.style.left = leftPosition + '%';
       particle.style.bottom = '-50px';
       
-      particle.style.animationDelay = Math.random() * 3 + 's';
-      particle.style.animationDuration = (12 + Math.random() * 8) + 's';
+      const animationDelay = Math.random() * 3;
+      const animationDuration = 12 + Math.random() * 8;
+      
+      particle.style.animationDelay = animationDelay + 's';
+      particle.style.animationDuration = animationDuration + 's';
       
       const scale = isBinary ? (1.0 + Math.random() * 0.5) : (0.8 + Math.random() * 0.7);
       particle.style.fontSize = (isBinary ? 18 : 16) * scale + 'px';
@@ -747,15 +752,63 @@
         particle.style.textShadow = '0 0 8px rgba(255, 255, 255, 0.5)';
       }
       
-      this.container.appendChild(particle);
-      this.particles.push(particle);
+      // 파티클 정보 저장
+      const particleData = {
+        element: particle,
+        createdTime: Date.now(),
+        animationDelay: animationDelay * 1000,
+        animationDuration: animationDuration * 1000,
+        isRemoving: false
+      };
       
+      this.container.appendChild(particle);
+      this.particles.push(particleData);
+      
+      // 애니메이션 완료 후 자연스럽게 제거
+      const totalLifetime = (animationDelay + animationDuration) * 1000;
       setTimeout(() => {
-        if (particle.parentNode) {
-          particle.parentNode.removeChild(particle);
-          this.particles = this.particles.filter(p => p !== particle);
+        this.removeParticle(particleData);
+      }, totalLifetime + 1000); // 1초 여유시간 추가
+    }
+
+    removeParticle(particleData) {
+      if (particleData.isRemoving) return;
+      
+      particleData.isRemoving = true;
+      const particle = particleData.element;
+      
+      if (particle && particle.parentNode) {
+        // 자연스러운 페이드아웃 효과
+        particle.style.transition = 'opacity 0.5s ease-out';
+        particle.style.opacity = '0';
+        
+        setTimeout(() => {
+          if (particle.parentNode) {
+            particle.parentNode.removeChild(particle);
+          }
+          this.particles = this.particles.filter(p => p !== particleData);
+        }, 500);
+      }
+    }
+
+    cleanupParticles() {
+      const currentTime = Date.now();
+      const particlesToRemove = [];
+      
+      this.particles.forEach(particleData => {
+        const totalLifetime = particleData.animationDelay + particleData.animationDuration;
+        const elapsed = currentTime - particleData.createdTime;
+        
+        // 예상 생명주기를 초과한 파티클들 찾기
+        if (elapsed > totalLifetime + 2000 && !particleData.isRemoving) {
+          particlesToRemove.push(particleData);
         }
-      }, 20000);
+      });
+      
+      // 찾은 파티클들 제거
+      particlesToRemove.forEach(particleData => {
+        this.removeParticle(particleData);
+      });
     }
   }
 

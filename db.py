@@ -1,4 +1,5 @@
 import pymysql
+import pymysql.cursors
 import os
 from dotenv import load_dotenv
 import uuid
@@ -19,7 +20,7 @@ def get_db_connection():
         connection = pymysql.connect(
             host=DB_HOST,
             user=DB_USER,
-            password=DB_PASSWORD,
+            password=DB_PASSWORD or "",  # None일 경우 빈 문자열 사용
             database=DB_NAME,
             port=DB_PORT,
             charset='utf8mb4',
@@ -544,25 +545,60 @@ def delete_session(session_id):
     """세션을 삭제하는 함수"""
     conn = get_db_connection()
     if not conn:
+        print("[ERROR] 데이터베이스 연결 실패")
         return False
     
     try:
         with conn.cursor() as cursor:
-            # 먼저 관련 채팅 기록 삭제
+            # 1. 먼저 해당 세션이 존재하는지 확인
+            sql = "SELECT session_id FROM sessions WHERE session_id = %s"
+            cursor.execute(sql, (session_id,))
+            if not cursor.fetchone():
+                print(f"[WARNING] 삭제하려는 세션 {session_id}이 존재하지 않습니다.")
+                return False
+            
+            # 2. 관련 코드 변경 기록 삭제 (있다면)
+            try:
+                sql = "DELETE FROM code_changes WHERE session_id = %s"
+                cursor.execute(sql, (session_id,))
+                print(f"[DEBUG] 코드 변경 기록 삭제 완료: {cursor.rowcount}개")
+            except Exception as e:
+                print(f"[WARNING] 코드 변경 기록 삭제 중 오류 (무시 가능): {e}")
+            
+            # 3. 채팅 기록 삭제
             sql = "DELETE FROM chat_history WHERE session_id = %s"
             cursor.execute(sql, (session_id,))
+            deleted_chat_count = cursor.rowcount
+            print(f"[DEBUG] 채팅 기록 삭제 완료: {deleted_chat_count}개")
             
-                            # 세션 삭제
+            # 4. 세션 삭제
             sql = "DELETE FROM sessions WHERE session_id = %s"
             cursor.execute(sql, (session_id,))
+            deleted_session_count = cursor.rowcount
+            print(f"[DEBUG] 세션 삭제 완료: {deleted_session_count}개")
+            
+            if deleted_session_count == 0:
+                print(f"[WARNING] 세션 {session_id}이 실제로 삭제되지 않았습니다.")
+                return False
         
         conn.commit()
+        print(f"[SUCCESS] 세션 {session_id} 삭제 완료")
         return True
     except Exception as e:
+        import traceback
         print(f"[ERROR] 세션 삭제 오류: {e}")
+        traceback.print_exc()
+        try:
+            conn.rollback()
+            print("[DEBUG] 트랜잭션 롤백 완료")
+        except:
+            pass
         return False
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except:
+            pass
 
 def get_analyzed_repositories(user_id):
     """사용자가 분석한 모든 레포지토리 목록을 가져오는 함수"""
