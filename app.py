@@ -122,13 +122,14 @@ def github_login():
     server_name = os.environ.get('SERVER_NAME')
     scheme = os.environ.get('PREFERRED_URL_SCHEME', 'http')
     port = os.environ.get('PORT', '5000')
+    use_port = os.environ.get('USE_PORT_IN_URL', 'false').lower() == 'true'
     
     if server_name:
         # 환경 변수가 있으면 직접 생성
-        if port == '80' and scheme == 'http' or port == '443' and scheme == 'https':
-            callback_url = f"{scheme}://{server_name}/github/callback"
-        else:
+        if use_port and port not in ['80', '443']:
             callback_url = f"{scheme}://{server_name}:{port}/github/callback"
+        else:
+            callback_url = f"{scheme}://{server_name}/github/callback"
     else:
         # 환경 변수가 없으면 Flask의 url_for 사용
         callback_url = url_for('github_callback', _external=True)
@@ -137,6 +138,7 @@ def github_login():
     print(f"[DEBUG] SERVER_NAME: {server_name}")
     print(f"[DEBUG] PREFERRED_URL_SCHEME: {scheme}")
     print(f"[DEBUG] PORT: {port}")
+    print(f"[DEBUG] USE_PORT_IN_URL: {use_port}")
     
     # 사용자를 GitHub 인증 페이지로 리디렉션 (redirect_uri 추가)
     github_auth_url = (
@@ -1448,13 +1450,14 @@ def google_login():
     server_name = os.environ.get('SERVER_NAME')
     scheme = os.environ.get('PREFERRED_URL_SCHEME', 'http')
     port = os.environ.get('PORT', '5000')
+    use_port = os.environ.get('USE_PORT_IN_URL', 'false').lower() == 'true'
     
     if server_name:
         # 환경 변수가 있으면 직접 생성
-        if port == '80' and scheme == 'http' or port == '443' and scheme == 'https':
-            callback_url = f"{scheme}://{server_name}/google/callback"
-        else:
+        if use_port and port not in ['80', '443']:
             callback_url = f"{scheme}://{server_name}:{port}/google/callback"
+        else:
+            callback_url = f"{scheme}://{server_name}/google/callback"
     else:
         # 환경 변수가 없으면 Flask의 url_for 사용
         callback_url = url_for('google_callback', _external=True)
@@ -1463,6 +1466,7 @@ def google_login():
     print(f"[DEBUG] SERVER_NAME: {server_name}")
     print(f"[DEBUG] PREFERRED_URL_SCHEME: {scheme}")
     print(f"[DEBUG] PORT: {port}")
+    print(f"[DEBUG] USE_PORT_IN_URL: {use_port}")
     
     google_provider_cfg = get_google_provider_cfg()
     authorization_endpoint = google_provider_cfg["authorization_endpoint"]
@@ -1492,12 +1496,13 @@ def google_callback():
     server_name = os.environ.get('SERVER_NAME')
     scheme = os.environ.get('PREFERRED_URL_SCHEME', 'http')
     port = os.environ.get('PORT', '5000')
+    use_port = os.environ.get('USE_PORT_IN_URL', 'false').lower() == 'true'
     
     if server_name:
-        if port == '80' and scheme == 'http' or port == '443' and scheme == 'https':
-            callback_url = f"{scheme}://{server_name}/google/callback"
-        else:
+        if use_port and port not in ['80', '443']:
             callback_url = f"{scheme}://{server_name}:{port}/google/callback"
+        else:
+            callback_url = f"{scheme}://{server_name}/google/callback"
     else:
         callback_url = url_for('google_callback', _external=True)
     
