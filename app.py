@@ -51,7 +51,8 @@ if not db_initialized:
 # 파일 기반 저장 제거 - 모든 데이터는 DB에 저장됨
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24) # Flask 세션을 위한 secret_key 설정
+# Flask 세션을 위한 고정 secret_key 설정 (배포 환경에서 세션 유지)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'your-fixed-secret-key-here-change-in-production')
 
 # AWS 배포를 위한 설정
 app.config['SERVER_NAME'] = os.environ.get('SERVER_NAME')  # AWS 도메인 설정

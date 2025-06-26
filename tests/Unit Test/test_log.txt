@@ -1,17 +1,39 @@
-[INFO] Running test_app.py ...
-[PASS] test_app_import
-[INFO] Running test_chat_handler.py ...
-[PASS] test_handle_chat
-[INFO] Running test_chat_memory.py ...
-[PASS] test_module_import
-[INFO] Running test_db.py ...
-[PASS] test_create_and_get_user
-[INFO] Running test_git_modifier.py ...
-[PASS] test_module_import
-[INFO] Running test_github_analyzer.py ...
-[PASS] test_module_import
+============================= test session starts =============================
+platform win32 -- Python 3.10.18, pytest-8.4.1, pluggy-1.6.0
+rootdir: C:\Users\Playdata\Desktop\4th_Project\3rd_project
+plugins: anyio-4.9.0, langsmith-0.3.45
+collected 19 items
 
-----------------------------------------------------------------------
-Ran 6 tests in 2.123s
+tests\Unit Test\test_e2e.py .                                            [  5%]
+tests\test_app.py .                                                      [ 10%]
+tests\test_chat_handler.py ...                                           [ 26%]
+tests\test_chat_memory.py ...                                            [ 42%]
+tests\test_db.py F....                                                   [ 68%]
+tests\test_git_modifier.py ...                                           [ 84%]
+tests\test_github_analyzer.py ...                                        [100%]
 
-OK 
+================================== FAILURES ===================================
+____________________ TestDB.test_create_user_and_duplicate ____________________
+
+self = <test_db.TestDB testMethod=test_create_user_and_duplicate>
+
+    def test_create_user_and_duplicate(self):
+        # 정상 생성
+        success, result = create_user(self.username, self.email, self.password, github_id=self.github_id)
+        self.assertTrue(success)
+        self.user_id = result
+    
+        # 중복 이메일
+        success, msg = create_user("other", self.email, "pw")
+        self.assertFalse(success)
+        self.assertIn("이메일", msg)
+    
+        # 중복 username
+        success, msg = create_user(self.username, "other@example.com", "pw")
+>       self.assertFalse(success)
+E       AssertionError: True is not false
+
+tests\test_db.py:30: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_db.py::TestDB::test_create_user_and_duplicate - AssertionEr...
+================== 1 failed, 18 passed in 145.84s (0:02:25) ===================
