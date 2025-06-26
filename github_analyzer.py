@@ -63,10 +63,14 @@ def analyze_repository(repo_url: str, token: Optional[str] = None, session_id: O
         if session_id:
             cleanup_chromadb_for_session(session_id)
         
-        # 저장소 정보 가져오기
+        # 저장소 정보 가져오기 (GitHub API 사용)
         fetcher = GitHubRepositoryFetcher(repo_url, token, session_id)
+        
+        # GitHub API를 통한 데이터 로드 (클론 불필요)
+        print(f"[DEBUG] GitHub API를 통한 데이터 로드 시작")
         if not fetcher.load_repo_data():
             return {'success': False, 'error': '저장소 데이터를 로드할 수 없습니다.'}
+        print(f"[DEBUG] GitHub API 데이터 로드 완료")
         
         files = fetcher.get_file_contents()
         if not files:
@@ -800,35 +804,30 @@ class GitHubRepositoryFetcher:
 
     def load_repo_data(self) -> bool:
         """
-        기존에 분석된 저장소 데이터를 로드합니다.
+        GitHub API를 통해 저장소 데이터를 로드합니다.
         
         Returns:
             bool: 데이터 로드 성공 여부
         """
         try:
-            # 저장소 폴더가 존재하는지 확인
-            if not os.path.exists(self.repo_path):
-                print(f"[WARNING] 저장소 폴더가 존재하지 않습니다: {self.repo_path}")
-                return False
-                
             # 이미 필터링된 파일 목록이 있는지 확인
             if self.files:
                 print("[DEBUG] 이미 파일 목록이 로드되어 있습니다.")
                 return True
                 
-            # 파일 필터링 및 내용 가져오기
+            # GitHub API를 통한 파일 필터링 및 내용 가져오기
+            print("[DEBUG] GitHub API를 통한 파일 필터링 시작")
             self.filter_main_files()
-            self.files = self.get_file_contents()
             
             if not self.files:
-                print("[WARNING] 파일 목록을 로드할 수 없습니다.")
+                print("[WARNING] 필터링된 파일 목록이 없습니다.")
                 return False
                 
-            print(f"[DEBUG] 저장소 데이터 로드 성공: {len(self.files)} 파일")
+            print(f"[DEBUG] GitHub API 데이터 로드 성공: {len(self.files)} 파일")
             return True
         except Exception as e:
             import traceback
-            print(f"[ERROR] 저장소 데이터 로드 실패: {e}")
+            print(f"[ERROR] GitHub API 데이터 로드 실패: {e}")
             traceback.print_exc()
             return False
             
