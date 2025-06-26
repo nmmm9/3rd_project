@@ -123,8 +123,14 @@ def github_login():
     scheme = os.environ.get('PREFERRED_URL_SCHEME', 'http')
     port = os.environ.get('PORT', '5000')
     use_port = os.environ.get('USE_PORT_IN_URL', 'false').lower() == 'true'
+    # 강제 콜백 URL 설정 (디버깅용)
+    force_callback_url = os.environ.get('GITHUB_CALLBACK_URL')
     
-    if server_name:
+    if force_callback_url:
+        # 강제 URL이 설정되어 있으면 그것을 사용
+        callback_url = force_callback_url
+        print(f"[DEBUG] GitHub OAuth 강제 콜백 URL 사용: {callback_url}")
+    elif server_name:
         # 환경 변수가 있으면 직접 생성
         if use_port and port not in ['80', '443']:
             callback_url = f"{scheme}://{server_name}:{port}/github/callback"
@@ -407,6 +413,11 @@ def new_chat():
     repo_url = data.get('repo_url')
     token = data.get('token')
     
+    # 토큰이 없으면 현재 사용자의 GitHub 토큰 사용
+    if not token and 'github_token' in session:
+        token = session['github_token']
+        print(f"[DEBUG] 새 채팅 세션에 사용자 GitHub 토큰 적용: {token[:8] if token else 'None'}...")
+    
     if not repo_url:
         return jsonify({'status': '에러', 'error': '레포지토리 URL이 필요합니다.'}), 400
     
@@ -422,76 +433,16 @@ def new_chat():
     # 새 채팅 세션 생성
     session_id = db.create_new_chat_session(user_id, repo_url, token)
     
-    if not session_id:
-        return jsonify({'status': '에러', 'error': '새 채팅 생성 실패'}), 500
-    
-    # 기존 세션에서 파일 정보 및 ChromaDB 데이터 복사
-    try:
-        # 가장 최근 세션에서 파일 정보 복사
-        latest_session = existing_sessions[0]
-        existing_session_id = latest_session['session_id']
-        
-        if existing_session_id != session_id:  # 자기 자신이 아닌 경우만
-            # 1. DB에서 파일 정보 복사
-            files_data, directory_structure = db.get_session_files_data(existing_session_id)
-            if files_data or directory_structure:
-                db.update_session_files_data(session_id, files_data, directory_structure)
-                print(f"[DEBUG] 기존 세션 {existing_session_id}에서 파일 정보 복사 완료")
-            
-            # 2. ChromaDB 데이터 복사
-            try:
-                import os
-                import shutil
-                import time
-                
-                source_db_path = os.path.join("repo_analysis_db", existing_session_id)
-                target_db_path = os.path.join("repo_analysis_db", session_id)
-                
-                print(f"[DEBUG] ChromaDB 복사 시도: {source_db_path} -> {target_db_path}")
-                
-                if os.path.exists(source_db_path):
-                    # 기존 대상 경로가 있으면 삭제
-                    if os.path.exists(target_db_path):
-                        print(f"[DEBUG] 기존 대상 경로 삭제: {target_db_path}")
-                        shutil.rmtree(target_db_path)
-                        time.sleep(0.1)  # 파일 시스템 동기화 대기
-                    
-                    # 디렉토리 복사
-                    shutil.copytree(source_db_path, target_db_path)
-                    print(f"[DEBUG] ChromaDB 데이터 복사 완료: {source_db_path} -> {target_db_path}")
-                    
-                    # 복사 결과 검증
-                    if os.path.exists(target_db_path):
-                        copied_files = []
-                        for root, dirs, files in os.walk(target_db_path):
-                            copied_files.extend(files)
-                        print(f"[DEBUG] 복사된 파일 수: {len(copied_files)}")
-                    else:
-                        print(f"[ERROR] ChromaDB 복사 후 대상 경로가 존재하지 않음: {target_db_path}")
-                        
-                else:
-                    print(f"[WARNING] 소스 ChromaDB 경로가 존재하지 않음: {source_db_path}")
-                    print(f"[DEBUG] 현재 repo_analysis_db 디렉토리 내용:")
-                    if os.path.exists("repo_analysis_db"):
-                        for item in os.listdir("repo_analysis_db"):
-                            item_path = os.path.join("repo_analysis_db", item)
-                            if os.path.isdir(item_path):
-                                print(f"  - {item}/ (디렉토리)")
-                            else:
-                                print(f"  - {item} (파일)")
-                    else:
-                        print("  repo_analysis_db 디렉토리가 존재하지 않음")
-                        
-            except Exception as chroma_error:
-                import traceback
-                print(f"[ERROR] ChromaDB 데이터 복사 실패: {chroma_error}")
-                traceback.print_exc()
-                
-    except Exception as e:
-        print(f"[ERROR] 세션 데이터 복사 실패: {e}")
-        # 세션은 생성되었으므로 경고만 하고 계속 진행
-    
-    return jsonify({'status': '성공', 'session_id': session_id})
+    if session_id:
+        print(f"[DEBUG] 새 채팅 세션 생성 성공: {session_id}")
+        return jsonify({
+            'status': '성공',
+            'session_id': session_id,
+            'repo_url': repo_url,
+            'has_token': bool(token)
+        })
+    else:
+        return jsonify({'status': '에러', 'error': '채팅 세션 생성에 실패했습니다.'}), 500
 
 @app.route('/chat-sessions', methods=['GET'])
 def get_chat_sessions():
@@ -1639,11 +1590,6 @@ def cleanup_chat_context():
     except Exception as e:
         print(f"[ERROR] 채팅 컨텍스트 정리 오류: {str(e)}")
         return jsonify({'status': '에러', 'error': '서버 오류가 발생했습니다.'}), 500
-
-
-@app.route('/health')
-def health():
-    return '', 200
 
 if __name__ == '__main__':
     # AWS 배포를 위한 설정

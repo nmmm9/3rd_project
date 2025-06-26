@@ -704,6 +704,7 @@ def get_session_data_from_db(session_id):
             session_data = {
                 'repo_url': session_info.get('repo_url'),
                 'token': session_info.get('token'),
+                'github_token': session_info.get('token'),  # GitHub 토큰도 같이 제공
                 'user_id': session_info.get('user_id')
             }
             
@@ -718,6 +719,8 @@ def get_session_data_from_db(session_id):
             # 디렉토리 구조 추가
             if session_info.get('directory_structure'):
                 session_data['directory_structure'] = session_info['directory_structure']
+            
+            print(f"[DEBUG] 세션 데이터 조회 완료: session_id={session_id}, token_존재={bool(session_data.get('token'))}")
             
             return session_data
     except Exception as e:
