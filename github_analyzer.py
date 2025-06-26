@@ -46,55 +46,76 @@ chroma_client = chromadb.PersistentClient(path=REPO_DB_PATH)
 
 def analyze_repository(repo_url: str, token: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    GitHub 저장소를 분석하고 임베딩하는 메인 함수
-    
-    이 함수는 다음과 같은 단계로 동작합니다:
-    1. GitHub 저장소를 로컬에 클론
-    2. 주요 파일 목록을 가져와서 필터링 (MAIN_EXTENSIONS에 정의된 확장자만)
-    3. 파일 내용을 가져와서 임베딩 처리
-    4. 디렉토리 구조 트리 텍스트 생성
+    GitHub 저장소를 분석하고 임베딩하는 함수
     
     Args:
-        repo_url (str): 분석할 GitHub 저장소 URL
+        repo_url (str): GitHub 저장소 URL
         token (Optional[str]): GitHub 개인 액세스 토큰
-        session_id (Optional[str]): 세션 ID (기본값: owner_repo)
+        session_id (Optional[str]): 세션 ID
         
     Returns:
-        Dict[str, Any]:
-            'files': 분석된 파일 목록 (각 파일은 {'path': '...', 'content': '...'} 형식)
-            'directory_structure': 디렉토리 구조 트리 텍스트
-        
-    Raises:
-        ValueError: 잘못된 GitHub URL인 경우
-        Exception: 저장소 클론 실패 시
+        Dict[str, Any]: 분석 결과
     """
     try:
-        # 1. Git 저장소에서 데이터 가져오기
-        fetcher = GitHubRepositoryFetcher(repo_url, token, session_id)
-        fetcher.clone_repo()
+        print(f"[DEBUG] 저장소 분석 시작: {repo_url}")
         
-        # 2. 주요 파일 필터링 및 내용 가져오기
-        fetcher.filter_main_files()  # MAIN_EXTENSIONS에 정의된 확장자만 필터링
+        # ChromaDB 디렉토리 정리 (차원 불일치 문제 해결)
+        if session_id:
+            cleanup_chromadb_for_session(session_id)
+        
+        # 저장소 정보 가져오기
+        fetcher = GitHubRepositoryFetcher(repo_url, token, session_id)
+        if not fetcher.load_repo_data():
+            return {'success': False, 'error': '저장소 데이터를 로드할 수 없습니다.'}
+        
         files = fetcher.get_file_contents()
-
-        # 3. 데이터 임베딩 처리
-        embedder = RepositoryEmbedder(fetcher.session_id)
-        embedder.process_and_embed(files)
-
-        # 4. 디렉토리 구조 트리 텍스트 생성
-        directory_structure = fetcher.generate_directory_structure()
+        if not files:
+            return {'success': False, 'error': '저장소에서 파일을 찾을 수 없습니다.'}
+        
+        # 디렉토리 구조 생성
+        directory_structure = fetcher.get_directory_structure()
+        
+        print(f"[DEBUG] 파일 수집 완료: {len(files)} 파일")
+        
+        # 임베딩 처리
+        if session_id:
+            embedder = RepositoryEmbedder(session_id)
+            embedder.process_and_embed(files)
+            print(f"[DEBUG] 임베딩 처리 완료")
         
         return {
+            'success': True,
             'files': files,
-            'directory_structure': directory_structure
+            'directory_structure': directory_structure,
+            'total_files': len(files)
         }
         
-    except ValueError as e:
-        print(f"[오류] 잘못된 GitHub URL: {e}")
-        raise
     except Exception as e:
-        print(f"[오류] 저장소 분석 실패: {e}")
-        raise
+        import traceback
+        print(f"[ERROR] 저장소 분석 실패: {e}")
+        traceback.print_exc()
+        return {'success': False, 'error': f'저장소 분석 중 오류 발생: {str(e)}'}
+
+def cleanup_chromadb_for_session(session_id: str):
+    """
+    특정 세션의 ChromaDB 데이터를 정리하는 함수
+    
+    Args:
+        session_id (str): 세션 ID
+    """
+    try:
+        import os
+        import shutil
+        
+        # ChromaDB 디렉토리 경로
+        chroma_path = os.path.join("repo_analysis_db", session_id)
+        
+        if os.path.exists(chroma_path):
+            print(f"[DEBUG] ChromaDB 디렉토리 삭제: {chroma_path}")
+            shutil.rmtree(chroma_path)
+            
+    except Exception as e:
+        print(f"[WARNING] ChromaDB 정리 중 오류 (무시 가능): {e}")
 
 def get_repository_branches(repo_url: str, token: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -638,8 +659,19 @@ class GitHubRepositoryFetcher:
         """
         file_objs = []
         for path in self.files:
+            # 큰 파일 제외 (minified JS, CSS 등)
+            if any(pattern in path.lower() for pattern in ['.min.js', '.min.css', 'bootstrap.min', 'jquery.min']):
+                print(f"[DEBUG] 큰 파일 제외: {path}")
+                continue
+                
             doc = self.get_repo_content_as_document(path)
             if doc:
+                # 내용 크기 확인
+                content_size = len(doc.page_content)
+                if content_size > 100000:  # 100KB 이상 파일 제외
+                    print(f"[DEBUG] 큰 파일 제외 (크기: {content_size}): {path}")
+                    continue
+                    
                 meta = doc.metadata
                 file_objs.append({
                     'path': path,
@@ -825,7 +857,21 @@ class RepositoryEmbedder:
             session_id (str): 세션 ID
         """
         self.session_id = session_id
-        self.collection = chroma_client.get_or_create_collection(name=f"repo_{session_id}")
+        collection_name = f"repo_{session_id}"
+        
+        # 기존 컬렉션이 있으면 삭제 (차원 불일치 문제 해결)
+        try:
+            existing_collections = chroma_client.list_collections()
+            for collection in existing_collections:
+                if collection.name == collection_name:
+                    print(f"[DEBUG] 기존 컬렉션 삭제: {collection_name}")
+                    chroma_client.delete_collection(name=collection_name)
+                    break
+        except Exception as e:
+            print(f"[WARNING] 컬렉션 삭제 중 오류 (무시 가능): {e}")
+        
+        # 새 컬렉션 생성
+        self.collection = chroma_client.create_collection(name=collection_name)
 
     def process_and_embed(self, files: List[Dict[str, Any]]):
         # 내부 비동기 함수 정의
@@ -1352,6 +1398,21 @@ class RepositoryEmbedder:
             # 2. 비동기 임베딩+역할태깅 함수
             async def embed_and_tag_async(args, client):
                 chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line = args
+                
+                # 청크 크기 확인 및 분할 (8192 토큰 제한)
+                chunk_tokens = len(enc.encode(chunk))
+                if chunk_tokens > 8000:  # 안전 마진
+                    print(f"[WARNING] 청크가 너무 큼 ({chunk_tokens} 토큰), 분할 처리: {file.get('path')}")
+                    # 큰 청크를 작은 청크로 분할
+                    sub_chunks = split_by_tokens(chunk, max_tokens=4000, overlap=200)
+                    # 첫 번째 서브청크만 사용 (또는 전체를 건너뛸 수 있음)
+                    if sub_chunks:
+                        chunk = sub_chunks[0][0]  # 첫 번째 서브청크의 텍스트
+                    else:
+                        # 분할도 실패하면 기본 임베딩 사용
+                        embedding = [0.0] * 3072
+                        return (embedding, "큰 파일 - 분석 생략", chunk[:1000], file, i, t_start, t_end, func_name, class_name, start_line, end_line)
+                
                 # 임베딩
                 try:
                     emb_resp = await client.embeddings.create(
@@ -1361,9 +1422,10 @@ class RepositoryEmbedder:
                     embedding = emb_resp.data[0].embedding
                 except Exception as e:
                     print(f"[WARNING] 임베딩 실패: {e}")
-                    embedding = [0.0] * 1536
+                    # text-embedding-3-large는 3072차원
+                    embedding = [0.0] * 3072
                 # 역할 태깅
-                tag_prompt = f"아래 코드는 어떤 역할(기능/목적)을 하나요? 한글로 간단히 요약해줘.\n\n코드:\n{chunk}"
+                tag_prompt = f"아래 코드는 어떤 역할(기능/목적)을 하나요? 한글로 간단히 요약해줘.\n\n코드:\n{chunk[:1000]}"  # 역할 태깅도 크기 제한
                 try:
                     tag_resp = await client.chat.completions.create(
                         model="gpt-3.5-turbo",
