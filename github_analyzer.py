@@ -640,12 +640,27 @@ class GitHubRepositoryFetcher:
     def get_all_main_files(self, path=""):
         files = []
         dir_contents = self.get_repo_directory_contents(path)
+        print(f"[DEBUG] get_all_main_files - path: {path}, dir_contents type: {type(dir_contents)}")
+        
+        if isinstance(dir_contents, dict) and dir_contents.get('error'):
+            print(f"[ERROR] get_all_main_files - API 오류: {dir_contents}")
+            return files
+            
         if isinstance(dir_contents, list):
+            print(f"[DEBUG] get_all_main_files - 디렉토리 항목 수: {len(dir_contents)}")
             for item in dir_contents:
+                print(f"[DEBUG] get_all_main_files - 항목: {item.get('name', 'Unknown')}, 타입: {item.get('type', 'Unknown')}")
                 if item['type'] == 'file' and any(item['path'].endswith(ext) for ext in MAIN_EXTENSIONS):
                     files.append(item['path'])
+                    print(f"[DEBUG] get_all_main_files - 주요 파일 추가: {item['path']}")
                 elif item['type'] == 'dir':
-                    files.extend(self.get_all_main_files(item['path']))
+                    sub_files = self.get_all_main_files(item['path'])
+                    files.extend(sub_files)
+                    print(f"[DEBUG] get_all_main_files - 하위 디렉토리에서 {len(sub_files)}개 파일 추가")
+        else:
+            print(f"[WARNING] get_all_main_files - 예상치 못한 응답 타입: {type(dir_contents)}")
+            
+        print(f"[DEBUG] get_all_main_files - 최종 파일 수: {len(files)}")
         return files
 
     def filter_main_files(self):
@@ -1391,9 +1406,11 @@ class RepositoryEmbedder:
                 
                 # 처리된 chunks 사용
                 for i, (chunk, t_start, t_end, func_name, class_name, start_line, end_line) in enumerate(processed_chunks):
-                    # 디버그 출력 추가하여 실제 값 확인
-                    print(f"[DEBUG] 청크 추가: 파일={file.get('path')}, 청크={i}, 길이={len(chunk) if chunk else 0}")
                     all_chunks.append((chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line))
+                
+                # 파일별 청크 수 요약 로그 (과도한 개별 로그 대신)
+                if processed_chunks:
+                    print(f"[DEBUG] 파일 청킹 완료: {file.get('path')} - {len(processed_chunks)}개 청크")
             # 2. 비동기 임베딩+역할태깅 함수
             async def embed_and_tag_async(args, client):
                 chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line = args
@@ -1433,7 +1450,7 @@ class RepositoryEmbedder:
                         max_tokens=64
                     )
                     role_tag = tag_resp.choices[0].message.content.strip()
-                    print(f"[INFO] 역할 태깅 결과: 파일={file.get('path')}, 청크={i}, 역할={role_tag}")
+                    # 역할 태깅 결과 로그를 요약 형태로 변경 (개별 로그 제거)
                 except Exception as e:
                     print(f"[WARNING] 역할 태깅 실패: {e}")
                     role_tag = ''
@@ -1448,6 +1465,7 @@ class RepositoryEmbedder:
             results = await asyncio.gather(*tasks)
             print(f"[DEBUG] 임베딩+역할태깅 asyncio 병렬 처리 완료")
             # 4. DB 저장 (동기)
+            successful_saves = 0
             for embedding, role_tag, chunk, file, i, t_start, t_end, func_name, class_name, start_line, end_line in results:
                 file_name = file.get('file_name')
                 file_type = file.get('file_type')
@@ -1494,7 +1512,11 @@ class RepositoryEmbedder:
                     documents=[chunk],
                     metadatas=[safe_meta(metadata)]
                 )
-                print(f"[INFO] DB 저장: 파일={path}, 청크={i}, 역할={role_tag}, 임베딩 길이={len(embedding)}")
+                # DB 저장 로그를 개별 로그 대신 요약으로 처리
+                successful_saves += 1
+            
+            # 전체 처리 완료 요약 로그
+            print(f"[INFO] 임베딩 처리 완료: 총 {successful_saves}개 청크 저장")
         # 동기 함수에서 비동기 실행
         if sys.version_info >= (3, 7):
             asyncio.run(async_process_and_embed(files))
