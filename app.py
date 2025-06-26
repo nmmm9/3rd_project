@@ -118,12 +118,18 @@ def github_login():
         flash('GitHub Client ID가 설정되지 않았습니다.', 'error')
         return redirect(url_for('login'))
     
+    # 디버깅: 현재 설정 확인
+    print(f"[DEBUG] GitHub OAuth 시작")
+    print(f"[DEBUG] SERVER_NAME: {app.config.get('SERVER_NAME')}")
+    print(f"[DEBUG] PREFERRED_URL_SCHEME: {app.config.get('PREFERRED_URL_SCHEME')}")
+    
     # 사용자를 GitHub 인증 페이지로 리디렉션
     github_auth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
         f"&scope=repo,user"  # 필요한 권한 범위 (예: public_repo, repo, user 등)
     )
+    print(f"[DEBUG] GitHub OAuth 요청 URL: {github_auth_url}")
     return redirect(github_auth_url)
 
 # GitHub 로그인 콜백 처리
@@ -1421,17 +1427,39 @@ def google_login():
     if not GOOGLE_CLIENT_ID:
         flash('Google Client ID가 설정되지 않았습니다.', 'error')
         return redirect(url_for('login'))
+    
+    # 콜백 URL을 환경 변수 기반으로 직접 생성
+    server_name = os.environ.get('SERVER_NAME')
+    scheme = os.environ.get('PREFERRED_URL_SCHEME', 'http')
+    port = os.environ.get('PORT', '5000')
+    
+    if server_name:
+        # 환경 변수가 있으면 직접 생성
+        if port == '80' and scheme == 'http' or port == '443' and scheme == 'https':
+            callback_url = f"{scheme}://{server_name}/google/callback"
+        else:
+            callback_url = f"{scheme}://{server_name}:{port}/google/callback"
+    else:
+        # 환경 변수가 없으면 Flask의 url_for 사용
+        callback_url = url_for('google_callback', _external=True)
+    
+    print(f"[DEBUG] Google OAuth 콜백 URL: {callback_url}")
+    print(f"[DEBUG] SERVER_NAME: {server_name}")
+    print(f"[DEBUG] PREFERRED_URL_SCHEME: {scheme}")
+    print(f"[DEBUG] PORT: {port}")
+    
     google_provider_cfg = get_google_provider_cfg()
     authorization_endpoint = google_provider_cfg["authorization_endpoint"]
     # state, nonce 등은 생략(간단 구현)
     request_uri = (
         f"{authorization_endpoint}?response_type=code"
         f"&client_id={GOOGLE_CLIENT_ID}"
-        f"&redirect_uri={url_for('google_callback', _external=True)}"
+        f"&redirect_uri={callback_url}"
         f"&scope=openid%20email%20profile"
         f"&access_type=offline"
         f"&prompt=consent"
     )
+    print(f"[DEBUG] Google OAuth 요청 URL: {request_uri}")
     return redirect(request_uri)
 
 @app.route('/google/callback')
@@ -1443,6 +1471,22 @@ def google_callback():
     if not code:
         flash('인증 코드를 받지 못했습니다.', 'error')
         return redirect(url_for('login'))
+    
+    # 콜백 URL을 로그인 시와 동일하게 생성
+    server_name = os.environ.get('SERVER_NAME')
+    scheme = os.environ.get('PREFERRED_URL_SCHEME', 'http')
+    port = os.environ.get('PORT', '5000')
+    
+    if server_name:
+        if port == '80' and scheme == 'http' or port == '443' and scheme == 'https':
+            callback_url = f"{scheme}://{server_name}/google/callback"
+        else:
+            callback_url = f"{scheme}://{server_name}:{port}/google/callback"
+    else:
+        callback_url = url_for('google_callback', _external=True)
+    
+    print(f"[DEBUG] Google 토큰 요청 콜백 URL: {callback_url}")
+    
     google_provider_cfg = get_google_provider_cfg()
     token_endpoint = google_provider_cfg["token_endpoint"]
     token_url = token_endpoint
@@ -1450,7 +1494,7 @@ def google_callback():
         'code': code,
         'client_id': GOOGLE_CLIENT_ID,
         'client_secret': GOOGLE_CLIENT_SECRET,
-        'redirect_uri': url_for('google_callback', _external=True),
+        'redirect_uri': callback_url,
         'grant_type': 'authorization_code'
     }
     token_headers = {'Content-Type': 'application/x-www-form-urlencoded'}
