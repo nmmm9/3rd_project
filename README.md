@@ -16,7 +16,7 @@
 | 항목 | 내용 |
 |------|------|
 | **프로젝트명** | **GitHub 기반 코드 분석 챗봇** |
-| **개발팀** | **떡잎마을 방범대** |
+| **개발팀** | **떡잎마을 방범대대** |
 | **팀원** | 김이경, 노명구, 지상원, 허한결, 황차해 |
 | **개발 기간** | 2025년 6월 26일 - 6월 27일 |
 | **주요 기술** | Python, Flask, OpenAI GPT, ChromaDB, LangChain |
@@ -65,7 +65,7 @@
 
 ## 🏗️ 시스템 아키텍처
 
-<img src="static/s.jpg" width="900" />
+<img src="static/s" width="900" />
 
 ### 핵심 구성 요소
 
@@ -131,7 +131,7 @@
 
 ## ⚙️ 기술 스택 및 의존성
 
-### 7.1 백엔드 기술 스택
+###  백엔드 기술 스택
 
 | 분류 | 기술/라이브러리 | 버전 | 용도 |
 |------|----------------|------|------|
@@ -149,7 +149,7 @@
 | **토큰화** | tiktoken | 0.9.0 | 텍스트 토큰 계산 |
 | **마크다운 처리** | markdown | 3.6 | 마크다운 파싱 |
 
-### 7.2 프론트엔드 기술 스택
+###  프론트엔드 기술 스택
 
 | 분류 | 기술/라이브러리 | 버전 | 용도 |
 |------|----------------|------|------|
@@ -158,7 +158,7 @@
 | **코드 하이라이팅** | Highlight.js | 11.9.0 | 코드 문법 강조 |
 | **JavaScript** | Vanilla JS | ES6+ | 클라이언트 로직 |
 
-### 7.3 인프라 및 배포
+###  인프라 및 배포
 
 | 분류 | 기술/서비스 | 용도 |
 |------|-------------|------|
@@ -205,7 +205,7 @@
 
 ## 🔄 데이터 플로우
 
-### 8.1 저장소 분석 플로우
+###  저장소 분석 플로우
 
 ```
 사용자        웹서버        GitHub API    분석엔진       ChromaDB     데이터베이스
@@ -241,7 +241,7 @@
 6. 분석 완료 후 사용자에게 알림
 ```
 
-### 8.2 채팅 처리 플로우
+###  채팅 처리 플로우
 
 ```
 사용자     웹서버      ChromaDB    OpenAI API   데이터베이스   메모리시스템
@@ -408,9 +408,9 @@ DB_PASSWORD=your_database_password
 
 ## 📊 API 설계 및 명세서
 
-### 🌐 5.1 RESTful API 엔드포인트
+### 🌐  RESTful API 엔드포인트
 
-#### 🔐 5.1.1 인증 관련 API
+#### 🔐 인증 관련 API
 
 | HTTP 메서드 | 엔드포인트 | 설명 | 요청 파라미터 | 응답 형식 |
 |-------------|------------|------|---------------|----------|
@@ -422,7 +422,7 @@ DB_PASSWORD=your_database_password
 | `POST` | **`/signup`** | 회원가입 | `username`, `email`, `password` | 성공/실패 메시지 |
 | `GET` | **`/logout`** | 로그아웃 | - | 세션 삭제 후 랜딩으로 리다이렉트 |
 
-#### 📊 5.1.2 저장소 분석 API
+#### 📊 저장소 분석 API
 
 | HTTP 메서드 | 엔드포인트 | 설명 | 요청 파라미터 | 응답 형식 |
 |-------------|------------|------|---------------|----------|
@@ -431,7 +431,7 @@ DB_PASSWORD=your_database_password
 | `GET` | **`/api/files/<session_id>/<branch_name>`** | 파일 트리 조회 | - | JSON: `{success, tree}` |
 | `GET` | **`/api/file-content/<session_id>/<branch>/<path>`** | 파일 내용 조회 | - | JSON: `{success, content}` |
 
-#### 💬 5.1.3 채팅 관련 API
+#### 💬  채팅 관련 API
 
 | HTTP 메서드 | 엔드포인트 | 설명 | 요청 파라미터 | 응답 형식 |
 |-------------|------------|------|---------------|----------|
@@ -441,7 +441,7 @@ DB_PASSWORD=your_database_password
 | `POST` | **`/new-chat`** | 새 채팅 세션 생성 | `repo_url` | JSON: `{session_id}` |
 | `GET` | **`/chat-sessions`** | 채팅 세션 목록 | `repo_url` | JSON: `{sessions}` |
 
-#### 🔧 5.1.4 코드 수정 관련 API
+#### 🔧  코드 수정 관련 API
 
 | HTTP 메서드 | 엔드포인트 | 설명 | 요청 파라미터 | 응답 형식 |
 |-------------|------------|------|---------------|----------|
@@ -451,7 +451,7 @@ DB_PASSWORD=your_database_password
 | `POST` | **`/push_to_github`** | GitHub에 푸시 | `session_id`, `file_name`, `new_content`, `commit_msg` | JSON: `{success, message}` |
 | `POST` | **`/apply_local`** | 로컬에만 적용 | `session_id`, `file_name`, `new_content` | JSON: `{success, message}` |
 
-#### ⚙️ 5.1.5 세션 관리 API
+#### ⚙️  세션 관리 API
 
 | HTTP 메서드 | 엔드포인트 | 설명 | 요청 파라미터 | 응답 형식 |
 |-------------|------------|------|---------------|----------|
@@ -461,12 +461,12 @@ DB_PASSWORD=your_database_password
 | `POST` | **`/export-chat-md`** | 채팅 내용 마크다운 내보내기 | `session_id` | 파일 다운로드 |
 | `POST` | **`/cleanup-chat-context`** | 채팅 컨텍스트 정리 | `session_id` | JSON: `{success, message}` |
 
-### 📝 5.2 API 응답 형식
+### 📝  API 응답 형식
 
 > **일관성 있는 API 응답 형식**  
 > 모든 API는 JSON 형태로 응답하며, 성공/실패 상태와 메시지를 포함합니다.
 
-#### ✅ 5.2.1 성공 응답
+#### ✅  성공 응답
 
 ```json
 {
@@ -478,7 +478,7 @@ DB_PASSWORD=your_database_password
 }
 ```
 
-#### ❌ 5.2.2 에러 응답
+#### ❌  에러 응답
 
 ```json
 {
@@ -491,7 +491,7 @@ DB_PASSWORD=your_database_password
 }
 ```
 
-### 🔒 5.3 API 인증 및 보안
+### 🔒  API 인증 및 보안
 
 | 보안 요소 | 구현 방법 | 설명 |
 |-----------|----------|------|
@@ -502,7 +502,7 @@ DB_PASSWORD=your_database_password
 
 ## 🗄️ 데이터베이스 설계
 
-### 6.1 ERD (Entity Relationship Diagram)
+###  ERD (Entity Relationship Diagram)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -549,9 +549,9 @@ DB_PASSWORD=your_database_password
 - sessions (1) : code_changes (N) - 한 세션은 여러 코드 변경 기록을 가질 수 있음
 ```
 
-### 6.2 테이블 정의서
+###  테이블 정의서
 
-#### 6.2.1 users 테이블
+####  users 테이블
 
 | 컬럼명 | 데이터 타입 | 제약 조건 | 설명 |
 |--------|-------------|-----------|------|
@@ -572,7 +572,7 @@ DB_PASSWORD=your_database_password
 | `created_at` | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | 계정 생성일 |
 | `last_login` | TIMESTAMP | NULL | 마지막 로그인 시간 |
 
-#### 6.2.2 sessions 테이블
+####  sessions 테이블
 
 | 컬럼명 | 데이터 타입 | 제약 조건 | 설명 |
 |--------|-------------|-----------|------|
@@ -587,7 +587,7 @@ DB_PASSWORD=your_database_password
 | `directory_structure` | TEXT | NULL | 디렉토리 구조 |
 | `created_at` | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | 세션 생성일 |
 
-#### 6.2.3 chat_history 테이블
+####  chat_history 테이블
 
 | 컬럼명 | 데이터 타입 | 제약 조건 | 설명 |
 |--------|-------------|-----------|------|
@@ -597,7 +597,7 @@ DB_PASSWORD=your_database_password
 | `content` | TEXT | NOT NULL | 메시지 내용 |
 | `timestamp` | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | 메시지 전송 시간 |
 
-#### 6.2.4 code_changes 테이블
+####  code_changes 테이블
 
 | 컬럼명 | 데이터 타입 | 제약 조건 | 설명 |
 |--------|-------------|-----------|------|
@@ -610,11 +610,6 @@ DB_PASSWORD=your_database_password
 | `timestamp` | TIMESTAMP | DEFAULT CURRENT_TIMESTAMP | 변경 시간 |
 
 
-## 📞 연락처
-
-**떡잎마을 방범대대** - SK Networks Family AI 캠프 4차 프로젝트 3팀
-
-프로젝트 링크: [https://github.com/your-username/github-code-analyzer-chatbot](https://github.com/your-username/github-code-analyzer-chatbot)
 
 ---
 
