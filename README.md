@@ -69,7 +69,7 @@
 
 ### 핵심 구성 요소
 
-<img src="static/핵심기능.png" width="900" />
+<img src="static/핵심기능.png" width="400" />
 
 ## ⚙️ 주요 기능
 
