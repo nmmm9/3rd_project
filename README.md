@@ -203,15 +203,24 @@
 
 ## 💻 구현 화면
 
+### 랜딩페이지
+<img src="static/017.jpg" width="900" />
+
+### 로그인 페이지
+<img src="static/018.jpg" width="900" />
+
 ### 메인 대시보드
-<img src="teammate_img/챗봇 첫페이지.PNG" width="900" />
+<img src="static/019.jpg" width="900" />
 
-### 코드 분석 및 채팅
-<img src="teammate_img/구현화면_자동차.PNG" width="900" />
+### 채팅 및 채팅세션 관리
+<img src="static/020.jpg" width="900" />
 
-### 상세 분석 결과
-<img src="teammate_img/구현화면1.PNG" width="900" />
-<img src="teammate_img/구현화면2.PNG" width="900" />
+## 브랜치 관리 및 컨텍스트 첨부
+<img src="static/021.jpg" width="900" />
+
+## 대화내역 관리
+<img src="static/022.jpg" width="900" />
+
 
 ## 🚀 설치 및 실행
 
