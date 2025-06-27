@@ -510,6 +510,8 @@ DB_PASSWORD=your_database_password
 
 
 ---
+### 테스트
+<img src="static/4th_project_test.mp4" width="900" />
 
 ### 💭 한줄 회고
 - 김이경 : 좋은 아이디어 덕분에 좋은 산출물이 나온 것 같아요. 제가 사용하고 싶을 정도입니다. 멋진 팀원들 덕분에 많이 배워갑니다!
