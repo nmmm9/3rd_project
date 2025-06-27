@@ -197,7 +197,7 @@
 
 ###  채팅 처리 플로우
 
-<img src="static/채팅처리.png" width="900" />
+<img src="static/채팅처리1.png" width="900" />
 
 ```
 단계별 설명:
