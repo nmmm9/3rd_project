@@ -437,44 +437,9 @@ DB_PASSWORD=your_database_password
 
 ###  ERD (Entity Relationship Diagram)
 
+<img src="static/erd.png" width="900" />
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        USERS                                │
-├─────────────────────────────────────────────────────────────┤
-│ • id (PK)                    • is_google_user               │
-│ • username                   • google_id                    │
-│ • email (UNIQUE)             • google_username              │
-│ • password_hash              • google_token                 │
-│ • is_github_user             • google_avatar_url            │
-│ • github_id                  • created_at                   │
-│ • github_username            • last_login                   │
-│ • github_token               │                              │
-│ • github_avatar_url          │                              │
-└─────────────────┬───────────────────────────────────────────┘
-                  │ 1:N (owns)
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      SESSIONS                              │
-├─────────────────────────────────────────────────────────────┤
-│ • id (PK)                    • name                         │
-│ • session_id (UNIQUE)        • display_order                │
-│ • user_id (FK)               • files_data                   │
-│ • repo_url                   • directory_structure          │
-│ • token                      • created_at                   │
-└─────────────────┬───────────────────┬───────────────────────┘
-                  │ 1:N (contains)    │ 1:N (tracks)
-                  ▼                   ▼
-┌─────────────────────────────┐ ┌─────────────────────────────┐
-│        CHAT_HISTORY         │ │        CODE_CHANGES         │
-├─────────────────────────────┤ ├─────────────────────────────┤
-│ • id (PK)                   │ │ • id (PK)                   │
-│ • session_id (FK)           │ │ • session_id (FK)           │
-│ • role                      │ │ • file_name                 │
-│ • content                   │ │ • old_code                  │
-│ • timestamp                 │ │ • new_code                  │
-└─────────────────────────────┘ │ • commit_hash               │
-                                │ • timestamp                 │
-                                └─────────────────────────────┘
 
 관계 설명:
 - users (1) : sessions (N) - 한 사용자는 여러 세션을 가질 수 있음
