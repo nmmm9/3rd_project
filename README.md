@@ -57,7 +57,7 @@
 
 ## 🏗️ 시스템 아키텍처
 
-<img src="static/s.jpg" width="900" />
+<img src="static/s1.jpg" width="900" />
 
 ### 핵심 구성 요소
 
