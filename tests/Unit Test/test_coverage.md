@@ -1,3 +1,4 @@
+```
 Name                            Stmts   Miss  Cover
 ---------------------------------------------------
 tests\test_app.py                  65      0   100%
@@ -8,3 +9,4 @@ tests\test_git_modifier.py         40      8    80%
 tests\test_github_analyzer.py      34      6    82%
 ---------------------------------------------------
 TOTAL                             371     18    95% 
+```
